@@ -190,3 +190,43 @@ CREATE TABLE drawing_events (
 1. **MVP**: Single Node.js server, in-memory presence, managed Postgres
 2. **Phase 2**: Multiple WS servers, sticky sessions, Redis Pub/Sub
 3. **Phase 3**: Partition by boardId, snapshot compaction, event chunking
+
+## Deployment
+
+### Railway (Production)
+- Single service deploys both frontend (static) + backend (Node.js)
+- Postgres addon provides managed database
+- `DATABASE_URL` auto-injected by Railway
+- Dockerfile handles multi-stage build
+
+### Build Process
+```bash
+# Development
+pnpm dev          # Runs Vite dev server + tsx watch
+
+# Production
+pnpm build        # Builds client → dist/, compiles server
+node dist/index.js  # Serves API + static files
+```
+
+### Environment Variables
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
+| `PORT` | No | `3001` | HTTP/WebSocket server port |
+| `NODE_ENV` | No | `development` | `production` enables static serving |
+
+### Production Architecture
+```
+Railway Service
+├── Node.js server (PORT)
+│   ├── WebSocket: /ws or upgrade on same port
+│   ├── Static files: Vite build served from /
+│   └── SPA fallback: /* → index.html
+└── Postgres (DATABASE_URL)
+```
+
+### Local Development Ports
+- Frontend (Vite): http://localhost:5173
+- Backend (WebSocket): ws://localhost:3001
+- Postgres: localhost:5433 (Docker)

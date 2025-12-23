@@ -41,10 +41,11 @@ class WebSocketClient {
     // Determine WebSocket URL
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    // In development, Vite proxies /ws to the server
+    // In development, connect directly to backend port
+    // In production, connect to same origin (server handles both HTTP and WS)
     const wsUrl = import.meta.env.DEV
       ? `ws://localhost:3001`
-      : `${protocol}//${host}/ws`;
+      : `${protocol}//${host}`;
 
     console.log(`Connecting to ${wsUrl}...`);
     this.ws = new WebSocket(wsUrl);
