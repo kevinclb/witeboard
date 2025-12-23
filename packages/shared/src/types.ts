@@ -3,25 +3,74 @@
 // ============================================================================
 
 /**
- * Drawing event payload - the actual stroke/clear data
+ * Tool types for drawing
  */
-export interface DrawEventPayload {
-  color?: string;
-  width?: number;
-  points?: [number, number][];
+export type ToolType = 'pencil' | 'marker' | 'brush' | 'rectangle' | 'ellipse' | 'line' | 'eraser';
+
+/**
+ * Shape types
+ */
+export type ShapeType = 'rectangle' | 'ellipse' | 'line';
+
+/**
+ * Drawing event payload - the actual stroke/clear/shape/delete data
+ */
+export interface StrokePayload {
+  strokeId: string;       // Unique ID for eraser support
+  color: string;
+  width: number;
+  opacity?: number;       // For marker tool (semi-transparent)
+  points: [number, number][];
 }
+
+export interface ShapePayload {
+  strokeId: string;       // Unique ID for eraser support
+  shapeType: ShapeType;
+  start: [number, number];
+  end: [number, number];
+  color: string;
+  width: number;
+  opacity?: number;
+}
+
+export interface DeletePayload {
+  strokeIds: string[];    // Which strokes to delete
+}
+
+export interface ClearPayload {
+  // Empty - clears entire board
+}
+
+export type DrawEventPayload = StrokePayload | ShapePayload | DeletePayload | ClearPayload;
 
 /**
  * DrawEvent - Immutable, append-only, server-ordered
  * The server assigns `seq` which is the authoritative ordering per board
  */
+export type DrawEventType = 'stroke' | 'clear' | 'delete' | 'shape';
+
 export interface DrawEvent {
   boardId: string;
   seq: number;
-  type: 'stroke' | 'clear';
+  type: DrawEventType;
   userId: string;
   timestamp: number;
   payload: DrawEventPayload;
+}
+
+/**
+ * Type guards for payload types
+ */
+export function isStrokePayload(payload: DrawEventPayload): payload is StrokePayload {
+  return 'strokeId' in payload && 'points' in payload;
+}
+
+export function isShapePayload(payload: DrawEventPayload): payload is ShapePayload {
+  return 'strokeId' in payload && 'shapeType' in payload;
+}
+
+export function isDeletePayload(payload: DrawEventPayload): payload is DeletePayload {
+  return 'strokeIds' in payload;
 }
 
 /**
@@ -76,7 +125,7 @@ export interface HelloMessage {
 export interface DrawEventMessage {
   type: 'DRAW_EVENT';
   payload: {
-    type: 'stroke' | 'clear';
+    type: DrawEventType;
     payload: DrawEventPayload;
   };
 }

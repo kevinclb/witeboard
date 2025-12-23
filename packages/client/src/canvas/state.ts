@@ -1,4 +1,5 @@
-import type { DrawEvent } from '@witeboard/shared';
+import type { DrawEvent, ToolType, ShapeType } from '@witeboard/shared';
+import { generateUUID, isStrokePayload, isShapePayload, isDeletePayload } from '@witeboard/shared';
 
 /**
  * Canvas Engine State - Imperative module (NOT React state)
@@ -98,13 +99,43 @@ export function getZoomPercent(): number {
 // Authoritative replay log for current board
 export let drawLog: DrawEvent[] = [];
 
-// Current stroke being drawn (optimistic)
-export interface PendingStroke {
+// Set of deleted stroke IDs (for efficient replay filtering)
+export const deletedStrokeIds = new Set<string>();
+
+// Stroke bounding boxes for hit-testing (eraser support)
+export interface StrokeBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  points: [number, number][];
   color: string;
   width: number;
+  opacity: number;
+}
+export const strokeBoundsMap = new Map<string, StrokeBounds>();
+
+// Current stroke being drawn (optimistic)
+export interface PendingStroke {
+  strokeId: string;       // Unique ID for this stroke
+  color: string;
+  width: number;
+  opacity: number;        // 1.0 for pencil/brush, 0.7 for marker
   points: [number, number][]; // World coordinates
 }
 export let pendingStroke: PendingStroke | null = null;
+
+// Pending shape being drawn (for rectangle/ellipse/line tools)
+export interface PendingShape {
+  strokeId: string;
+  shapeType: ShapeType;
+  start: [number, number];  // World coordinates
+  end: [number, number];    // World coordinates (updated on drag)
+  color: string;
+  width: number;
+  opacity: number;
+}
+export let pendingShape: PendingShape | null = null;
 
 // Remote cursors (world coordinates)
 export interface RemoteCursor {
@@ -116,9 +147,55 @@ export interface RemoteCursor {
 }
 export const cursors = new Map<string, RemoteCursor>();
 
-// Current drawing settings
+// ============================================================================
+// Tool Presets
+// ============================================================================
+
+export interface ToolPreset {
+  width: number;
+  opacity: number;
+}
+
+export const TOOL_PRESETS: Record<'pencil' | 'marker' | 'brush', ToolPreset> = {
+  pencil: { width: 2, opacity: 1 },
+  marker: { width: 8, opacity: 0.7 },
+  brush: { width: 4, opacity: 1 },
+};
+
+// Color palette
+export const COLOR_PALETTE = [
+  '#ffffff', // White
+  '#ff6b6b', // Red
+  '#ffa94d', // Orange
+  '#ffd43b', // Yellow
+  '#69db7c', // Green
+  '#4dabf7', // Blue
+  '#9775fa', // Purple
+  '#1a1a1a', // Black
+];
+
+// ============================================================================
+// Current Tool State
+// ============================================================================
+
+export let currentTool: ToolType = 'pencil';
 export let currentColor = '#ffffff';
-export let currentWidth = 3;
+export let currentWidth = TOOL_PRESETS.pencil.width;
+export let currentOpacity = TOOL_PRESETS.pencil.opacity;
+
+/**
+ * Set the current tool and apply its preset
+ */
+export function setTool(tool: ToolType): void {
+  currentTool = tool;
+  
+  // Apply preset for brush-type tools
+  if (tool === 'pencil' || tool === 'marker' || tool === 'brush') {
+    const preset = TOOL_PRESETS[tool];
+    currentWidth = preset.width;
+    currentOpacity = preset.opacity;
+  }
+}
 
 // Canvas references (set by Canvas component)
 let historyCanvas: HTMLCanvasElement | null = null;
@@ -176,6 +253,8 @@ export function clearState(): void {
   drawLog = [];
   pendingStroke = null;
   cursors.clear();
+  deletedStrokeIds.clear();
+  strokeBoundsMap.clear();
   resetViewport();
   clearAllCanvases();
 }
@@ -222,6 +301,7 @@ function drawStrokeOnContext(
   points: [number, number][],
   color: string,
   width: number,
+  opacity: number = 1,
   applyTransform: boolean = true
 ): void {
   if (points.length < 1) return;
@@ -232,6 +312,7 @@ function drawStrokeOnContext(
     applyViewportTransform(ctx);
   }
 
+  ctx.globalAlpha = opacity;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -263,10 +344,11 @@ function drawStrokeOnContext(
 export function drawStrokeToHistory(
   points: [number, number][],
   color: string,
-  width: number
+  width: number,
+  opacity: number = 1
 ): void {
   if (!historyCtx) return;
-  drawStrokeOnContext(historyCtx, points, color, width);
+  drawStrokeOnContext(historyCtx, points, color, width, opacity);
 }
 
 /**
@@ -275,10 +357,11 @@ export function drawStrokeToHistory(
 export function drawStrokeToLive(
   points: [number, number][],
   color: string,
-  width: number
+  width: number,
+  opacity: number = 1
 ): void {
   if (!liveCtx) return;
-  drawStrokeOnContext(liveCtx, points, color, width);
+  drawStrokeOnContext(liveCtx, points, color, width, opacity);
 }
 
 /**
@@ -288,13 +371,15 @@ export function drawSegmentToLive(
   from: [number, number],
   to: [number, number],
   color: string,
-  width: number
+  width: number,
+  opacity: number = 1
 ): void {
   if (!liveCtx) return;
   
   liveCtx.save();
   applyViewportTransform(liveCtx);
   
+  liveCtx.globalAlpha = opacity;
   liveCtx.lineCap = 'round';
   liveCtx.lineJoin = 'round';
   liveCtx.beginPath();
@@ -308,21 +393,264 @@ export function drawSegmentToLive(
 }
 
 /**
+ * Compute bounding box for a set of points
+ */
+function computeBounds(points: [number, number][], width: number): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const padding = width / 2;
+  
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x - padding);
+    minY = Math.min(minY, y - padding);
+    maxX = Math.max(maxX, x + padding);
+    maxY = Math.max(maxY, y + padding);
+  }
+  
+  return { minX, minY, maxX, maxY };
+}
+
+/**
+ * Check if a point is within bounding box
+ */
+function pointInBounds(x: number, y: number, bounds: { minX: number; minY: number; maxX: number; maxY: number }): boolean {
+  return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY;
+}
+
+/**
+ * Check if a point is near any segment of a stroke
+ */
+function pointNearStroke(x: number, y: number, points: [number, number][], threshold: number): boolean {
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[i + 1];
+    
+    // Calculate distance from point to line segment
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const lengthSq = dx * dx + dy * dy;
+    
+    if (lengthSq === 0) {
+      // Segment is a point
+      const dist = Math.sqrt((x - x1) ** 2 + (y - y1) ** 2);
+      if (dist <= threshold) return true;
+      continue;
+    }
+    
+    // Project point onto line segment
+    const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / lengthSq));
+    const projX = x1 + t * dx;
+    const projY = y1 + t * dy;
+    
+    const dist = Math.sqrt((x - projX) ** 2 + (y - projY) ** 2);
+    if (dist <= threshold) return true;
+  }
+  
+  // Check if near single point
+  if (points.length === 1) {
+    const [x1, y1] = points[0];
+    return Math.sqrt((x - x1) ** 2 + (y - y1) ** 2) <= threshold;
+  }
+  
+  return false;
+}
+
+/**
+ * Find stroke at a given world coordinate (for eraser)
+ */
+export function findStrokeAtPoint(worldX: number, worldY: number): string | null {
+  // Search in reverse order (most recent strokes on top)
+  const entries = Array.from(strokeBoundsMap.entries()).reverse();
+  
+  for (const [strokeId, bounds] of entries) {
+    // Skip deleted strokes
+    if (deletedStrokeIds.has(strokeId)) continue;
+    
+    // Quick bounding box check
+    if (!pointInBounds(worldX, worldY, bounds)) continue;
+    
+    // Precise stroke check
+    const threshold = Math.max(bounds.width, 5); // At least 5px for easy selection
+    if (pointNearStroke(worldX, worldY, bounds.points, threshold)) {
+      return strokeId;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Delete a stroke by ID
+ */
+export function deleteStroke(strokeId: string): void {
+  deletedStrokeIds.add(strokeId);
+  redrawAll();
+}
+
+/**
+ * Draw a shape on a canvas context
+ */
+function drawShapeOnContext(
+  ctx: CanvasRenderingContext2D,
+  shapeType: ShapeType,
+  start: [number, number],
+  end: [number, number],
+  color: string,
+  width: number,
+  opacity: number = 1,
+  applyTransform: boolean = true
+): void {
+  ctx.save();
+  
+  if (applyTransform) {
+    applyViewportTransform(ctx);
+  }
+  
+  ctx.globalAlpha = opacity;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  const [x1, y1] = start;
+  const [x2, y2] = end;
+  
+  ctx.beginPath();
+  
+  switch (shapeType) {
+    case 'line':
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      break;
+      
+    case 'rectangle':
+      ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      break;
+      
+    case 'ellipse':
+      const centerX = (x1 + x2) / 2;
+      const centerY = (y1 + y2) / 2;
+      const radiusX = Math.abs(x2 - x1) / 2;
+      const radiusY = Math.abs(y2 - y1) / 2;
+      ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+      break;
+  }
+  
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Draw a shape on the history canvas
+ */
+export function drawShapeToHistory(
+  shapeType: ShapeType,
+  start: [number, number],
+  end: [number, number],
+  color: string,
+  width: number,
+  opacity: number = 1
+): void {
+  if (!historyCtx) return;
+  drawShapeOnContext(historyCtx, shapeType, start, end, color, width, opacity);
+}
+
+/**
+ * Draw a shape on the live canvas (for preview)
+ */
+export function drawShapeToLive(
+  shapeType: ShapeType,
+  start: [number, number],
+  end: [number, number],
+  color: string,
+  width: number,
+  opacity: number = 1
+): void {
+  if (!liveCtx) return;
+  drawShapeOnContext(liveCtx, shapeType, start, end, color, width, opacity);
+}
+
+/**
+ * Register a stroke in the bounds map for hit-testing
+ */
+function registerStrokeBounds(strokeId: string, points: [number, number][], color: string, width: number, opacity: number): void {
+  const { minX, minY, maxX, maxY } = computeBounds(points, width);
+  strokeBoundsMap.set(strokeId, { minX, minY, maxX, maxY, points, color, width, opacity });
+}
+
+/**
+ * Register a shape in the bounds map for hit-testing
+ */
+function registerShapeBounds(strokeId: string, shapeType: ShapeType, start: [number, number], end: [number, number], color: string, width: number, opacity: number): void {
+  const [x1, y1] = start;
+  const [x2, y2] = end;
+  
+  // Compute points for the shape outline (for hit-testing)
+  let points: [number, number][];
+  
+  switch (shapeType) {
+    case 'line':
+      points = [start, end];
+      break;
+    case 'rectangle':
+      points = [
+        [x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]
+      ];
+      break;
+    case 'ellipse':
+      // Approximate ellipse with points
+      const centerX = (x1 + x2) / 2;
+      const centerY = (y1 + y2) / 2;
+      const radiusX = Math.abs(x2 - x1) / 2;
+      const radiusY = Math.abs(y2 - y1) / 2;
+      points = [];
+      for (let i = 0; i <= 16; i++) {
+        const angle = (i / 16) * Math.PI * 2;
+        points.push([
+          centerX + Math.cos(angle) * radiusX,
+          centerY + Math.sin(angle) * radiusY
+        ]);
+      }
+      break;
+  }
+  
+  const { minX, minY, maxX, maxY } = computeBounds(points, width);
+  strokeBoundsMap.set(strokeId, { minX, minY, maxX, maxY, points, color, width, opacity });
+}
+
+/**
  * Redraw all content with current viewport
  */
 export function redrawAll(): void {
   clearAllCanvases();
 
-  // Replay all strokes with current viewport
+  // Replay all strokes/shapes with current viewport, skipping deleted ones
   for (const event of drawLog) {
-    if (event.type === 'stroke' && event.payload.points) {
+    if (event.type === 'stroke' && isStrokePayload(event.payload)) {
+      // Skip deleted strokes
+      if (deletedStrokeIds.has(event.payload.strokeId)) continue;
+      
       drawStrokeToHistory(
         event.payload.points,
-        event.payload.color || '#ffffff',
-        event.payload.width || 3
+        event.payload.color,
+        event.payload.width,
+        event.payload.opacity ?? 1
+      );
+    } else if (event.type === 'shape' && isShapePayload(event.payload)) {
+      // Skip deleted shapes
+      if (deletedStrokeIds.has(event.payload.strokeId)) continue;
+      
+      drawShapeToHistory(
+        event.payload.shapeType,
+        event.payload.start,
+        event.payload.end,
+        event.payload.color,
+        event.payload.width,
+        event.payload.opacity ?? 1
       );
     } else if (event.type === 'clear') {
       clearAllCanvases();
+      deletedStrokeIds.clear();
+      strokeBoundsMap.clear();
     }
   }
 }
@@ -332,6 +660,49 @@ export function redrawAll(): void {
  */
 export function replayAll(events: DrawEvent[]): void {
   drawLog = events;
+  deletedStrokeIds.clear();
+  strokeBoundsMap.clear();
+  
+  // First pass: collect all deleted stroke IDs
+  for (const event of events) {
+    if (event.type === 'delete' && isDeletePayload(event.payload)) {
+      for (const id of event.payload.strokeIds) {
+        deletedStrokeIds.add(id);
+      }
+    }
+  }
+  
+  // Build stroke bounds map (for hit-testing)
+  for (const event of events) {
+    if (event.type === 'stroke' && isStrokePayload(event.payload)) {
+      if (!deletedStrokeIds.has(event.payload.strokeId)) {
+        registerStrokeBounds(
+          event.payload.strokeId,
+          event.payload.points,
+          event.payload.color,
+          event.payload.width,
+          event.payload.opacity ?? 1
+        );
+      }
+    } else if (event.type === 'shape' && isShapePayload(event.payload)) {
+      if (!deletedStrokeIds.has(event.payload.strokeId)) {
+        registerShapeBounds(
+          event.payload.strokeId,
+          event.payload.shapeType,
+          event.payload.start,
+          event.payload.end,
+          event.payload.color,
+          event.payload.width,
+          event.payload.opacity ?? 1
+        );
+      }
+    } else if (event.type === 'clear') {
+      // Clear resets everything
+      deletedStrokeIds.clear();
+      strokeBoundsMap.clear();
+    }
+  }
+  
   redrawAll();
 }
 
@@ -341,14 +712,53 @@ export function replayAll(events: DrawEvent[]): void {
 export function applyDrawEvent(event: DrawEvent): void {
   drawLog.push(event);
 
-  if (event.type === 'stroke' && event.payload.points) {
+  if (event.type === 'stroke' && isStrokePayload(event.payload)) {
+    // Register bounds for hit-testing
+    registerStrokeBounds(
+      event.payload.strokeId,
+      event.payload.points,
+      event.payload.color,
+      event.payload.width,
+      event.payload.opacity ?? 1
+    );
+    
     // Draw on live canvas
     drawStrokeToLive(
       event.payload.points,
-      event.payload.color || '#ffffff',
-      event.payload.width || 3
+      event.payload.color,
+      event.payload.width,
+      event.payload.opacity ?? 1
     );
+  } else if (event.type === 'shape' && isShapePayload(event.payload)) {
+    // Register bounds for hit-testing
+    registerShapeBounds(
+      event.payload.strokeId,
+      event.payload.shapeType,
+      event.payload.start,
+      event.payload.end,
+      event.payload.color,
+      event.payload.width,
+      event.payload.opacity ?? 1
+    );
+    
+    // Draw on live canvas
+    drawShapeToLive(
+      event.payload.shapeType,
+      event.payload.start,
+      event.payload.end,
+      event.payload.color,
+      event.payload.width,
+      event.payload.opacity ?? 1
+    );
+  } else if (event.type === 'delete' && isDeletePayload(event.payload)) {
+    // Add to deleted set and redraw
+    for (const id of event.payload.strokeIds) {
+      deletedStrokeIds.add(id);
+    }
+    redrawAll();
   } else if (event.type === 'clear') {
+    deletedStrokeIds.clear();
+    strokeBoundsMap.clear();
     clearAllCanvases();
   }
 }
@@ -358,8 +768,10 @@ export function applyDrawEvent(event: DrawEvent): void {
  */
 export function startStroke(worldX: number, worldY: number): void {
   pendingStroke = {
+    strokeId: generateUUID(),
     color: currentColor,
     width: currentWidth,
+    opacity: currentOpacity,
     points: [[worldX, worldY]],
   };
 }
@@ -374,7 +786,7 @@ export function continueStroke(worldX: number, worldY: number): void {
   pendingStroke.points.push([worldX, worldY]);
 
   // Draw segment optimistically
-  drawSegmentToLive(lastPoint, [worldX, worldY], pendingStroke.color, pendingStroke.width);
+  drawSegmentToLive(lastPoint, [worldX, worldY], pendingStroke.color, pendingStroke.width, pendingStroke.opacity);
 }
 
 /**
@@ -384,6 +796,65 @@ export function endStroke(): PendingStroke | null {
   const stroke = pendingStroke;
   pendingStroke = null;
   return stroke;
+}
+
+/**
+ * Start a new pending shape (in world coordinates)
+ */
+export function startShape(worldX: number, worldY: number, shapeType: ShapeType): void {
+  pendingShape = {
+    strokeId: generateUUID(),
+    shapeType,
+    start: [worldX, worldY],
+    end: [worldX, worldY],
+    color: currentColor,
+    width: currentWidth,
+    opacity: currentOpacity,
+  };
+}
+
+/**
+ * Update the pending shape end point (for preview)
+ */
+export function updateShape(worldX: number, worldY: number): void {
+  if (!pendingShape) return;
+  
+  pendingShape.end = [worldX, worldY];
+  
+  // Clear live canvas and draw shape preview
+  clearLiveCanvas();
+  drawShapeToLive(
+    pendingShape.shapeType,
+    pendingShape.start,
+    pendingShape.end,
+    pendingShape.color,
+    pendingShape.width,
+    pendingShape.opacity
+  );
+}
+
+/**
+ * End the pending shape and return it
+ */
+export function endShape(): PendingShape | null {
+  const shape = pendingShape;
+  pendingShape = null;
+  clearLiveCanvas();
+  return shape;
+}
+
+/**
+ * Get current tool
+ */
+export function getCurrentTool(): ToolType {
+  return currentTool;
+}
+
+/**
+ * Get current color
+ */
+export function getCurrentColor(): string {
+  return currentColor;
 }
 
 /**

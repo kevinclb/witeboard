@@ -1,4 +1,4 @@
-import type { DrawEvent, DrawEventPayload } from '@witeboard/shared';
+import type { DrawEvent, DrawEventPayload, DrawEventType } from '@witeboard/shared';
 import { getMaxSeq, appendEvent } from './db/client.js';
 
 /**
@@ -29,7 +29,7 @@ export async function initBoardSequence(boardId: string): Promise<void> {
 export async function sequenceEvent(
   boardId: string,
   userId: string,
-  type: 'stroke' | 'clear',
+  type: DrawEventType,
   payload: DrawEventPayload
 ): Promise<DrawEvent> {
   // Ensure sequence is initialized

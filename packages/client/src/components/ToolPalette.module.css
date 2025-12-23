@@ -1,0 +1,115 @@
+.palette {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+.tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toolButton {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toolButton svg {
+  width: 20px;
+  height: 20px;
+}
+
+.toolButton:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.toolButton.active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: var(--bg-primary);
+}
+
+.toolButton.active:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+.colors {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+
+.colorButton {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.colorButton:hover {
+  transform: scale(1.15);
+}
+
+.colorButton.active {
+  box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px var(--accent-color);
+  transform: scale(1.1);
+}
+
+.colorButton.disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.colorButton.disabled:hover {
+  transform: none;
+}
+
+.colorCheck {
+  font-size: 10px;
+  font-weight: bold;
+  color: #000;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.8);
+}
+
+/* Make check visible on dark colors */
+.colorButton[style*="1a1a1a"] .colorCheck {
+  color: #fff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+}
+

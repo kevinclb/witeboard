@@ -5,6 +5,8 @@ import type {
   DrawEventMessage,
   CursorMoveMessage,
   ServerMessage,
+  DrawEventType,
+  DrawEventPayload,
 } from '@witeboard/shared';
 import {
   resolveIdentity,

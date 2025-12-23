@@ -2,6 +2,8 @@ import type {
   ClientMessage,
   ServerMessage,
   DrawEvent,
+  DrawEventType,
+  DrawEventPayload,
   PresenceState,
   UserIdentity,
 } from '@witeboard/shared';
@@ -141,7 +143,7 @@ class WebSocketClient {
   /**
    * Send a draw event
    */
-  sendDrawEvent(type: 'stroke' | 'clear', payload: DrawEvent['payload']): void {
+  sendDrawEvent(type: DrawEventType, payload: DrawEventPayload): void {
     this.send({
       type: 'DRAW_EVENT',
       payload: { type, payload },
