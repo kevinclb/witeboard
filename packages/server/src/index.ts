@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws';
 import { handleMessage, handleDisconnect } from './handlers.js';
 import { ensureBoardExists } from './db/client.js';
 import { initBoardSequence } from './sequencer.js';
+import { runMigrations } from './db/migrate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || process.env.WS_PORT || '3001', 10);
@@ -73,14 +74,20 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): boole
 async function main() {
   console.log(`Starting Witeboard server (${isProduction ? 'production' : 'development'})...`);
 
-  // Ensure global board exists
+  // Run migrations and initialize database
   try {
+    // Run migrations (idempotent - safe to run every startup)
+    await runMigrations();
+    
+    // Ensure global board exists and init sequence
     await ensureBoardExists('global', 'Global Whiteboard');
     await initBoardSequence('global');
     console.log('✓ Global board initialized');
   } catch (error) {
     console.error('Failed to initialize database. Is Postgres running?');
-    console.error('Run: pnpm db:up && pnpm db:migrate');
+    if (!isProduction) {
+      console.error('Run: pnpm db:up');
+    }
     console.error(error);
     process.exit(1);
   }

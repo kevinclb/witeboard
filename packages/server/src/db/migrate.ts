@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { pool } from './client.js';
 
 const SCHEMA = `
@@ -27,25 +26,43 @@ VALUES ('global', 'Global Whiteboard')
 ON CONFLICT (id) DO NOTHING;
 `;
 
-async function migrate() {
+/**
+ * Run database migrations
+ * Safe to call multiple times (idempotent)
+ */
+export async function runMigrations(): Promise<void> {
   console.log('Running database migrations...');
   
   try {
     await pool.query(SCHEMA);
-    console.log('✓ Schema created successfully');
-    console.log('✓ Global board ensured');
+    console.log('✓ Database schema ready');
+  } catch (error) {
+    console.error('Migration failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Run migrations as standalone script
+ * Used for local development: pnpm db:migrate
+ */
+async function main() {
+  try {
+    await runMigrations();
     
     // Verify
     const result = await pool.query('SELECT id, name FROM boards');
     console.log('Boards:', result.rows);
-    
-  } catch (error) {
-    console.error('Migration failed:', error);
-    process.exit(1);
   } finally {
     await pool.end();
   }
 }
 
-migrate();
-
+// Only run if this is the main module (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
