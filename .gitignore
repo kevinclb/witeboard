@@ -17,7 +17,7 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
-*.env
+# Note: .env files must be created manually, see packages/server/.env.example
 
 # Logs
 logs/

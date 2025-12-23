@@ -1,0 +1,51 @@
+import 'dotenv/config';
+import { pool } from './client.js';
+
+const SCHEMA = `
+-- Boards table
+CREATE TABLE IF NOT EXISTS boards (
+  id TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  name TEXT
+);
+
+-- Drawing events table (append-only log)
+CREATE TABLE IF NOT EXISTS drawing_events (
+  board_id TEXT NOT NULL REFERENCES boards(id),
+  seq BIGINT NOT NULL,
+  event JSONB NOT NULL,
+  PRIMARY KEY (board_id, seq)
+);
+
+-- Index for faster event replay
+CREATE INDEX IF NOT EXISTS idx_drawing_events_board_seq 
+ON drawing_events (board_id, seq);
+
+-- Ensure global board exists
+INSERT INTO boards (id, name) 
+VALUES ('global', 'Global Whiteboard') 
+ON CONFLICT (id) DO NOTHING;
+`;
+
+async function migrate() {
+  console.log('Running database migrations...');
+  
+  try {
+    await pool.query(SCHEMA);
+    console.log('✓ Schema created successfully');
+    console.log('✓ Global board ensured');
+    
+    // Verify
+    const result = await pool.query('SELECT id, name FROM boards');
+    console.log('Boards:', result.rows);
+    
+  } catch (error) {
+    console.error('Migration failed:', error);
+    process.exit(1);
+  } finally {
+    await pool.end();
+  }
+}
+
+migrate();
+
