@@ -1,0 +1,192 @@
+# Witeboard — Distributed Global Whiteboard
+
+## Project Overview
+
+A minimalist, globally shared, real-time virtual whiteboard. Think Excalidraw/Figma meets Paint/Canva, but every user worldwide shares the same canvas. Future support for private breakout-room style group whiteboards.
+
+## Core Invariant (Embed Everywhere)
+
+**The server assigns the only authoritative order per board; clients deterministically replay immutable drawing events to render each board.**
+
+Rules:
+- Never sync pixels
+- Never diff the DOM for drawing
+- Replay operations → pixels are a side effect
+- The server assigns authoritative ordering (seq) for every board
+
+## Tech Stack
+
+### Frontend
+- Vite + React + TypeScript
+- React Router: `/`, `/login`, `/b/:boardId`
+- State store: Zustand (for presence + auth only, NOT canvas state)
+- Canvas rendering: Imperative module (NOT React state)
+- requestAnimationFrame for cursor overlay
+
+### Backend
+- Node.js + TypeScript
+- `ws` WebSocket server
+- Postgres (boards + drawing_events tables)
+- Future: Redis Pub/Sub for horizontal scaling
+
+### Auth
+- MVP: Anonymous identity by default
+- Future: Supabase Auth / Clerk
+
+## Architecture Rules
+
+### React Usage (CRITICAL)
+React is used ONLY for:
+- App shell (navbar, login page, layout)
+- Side user list card
+- Routing
+- Small controls
+
+**Canvas engine is imperative and must NOT store points in React state.**
+**React re-renders must not drive drawing.**
+
+### Canvas Rendering (Three Layers)
+1. **Canvas 1: History** — Rasterized past strokes
+2. **Canvas 2: Live** — Recent/unmerged strokes
+3. **Canvas 3: Cursor overlay** — Presence indicators
+
+Rendering rules:
+- Never re-render full history per frame
+- Append-only draw operations
+- Periodic compaction: merge live → history every N strokes
+- Cursor overlay: cleared/redrawn each animation frame
+
+### Client State (Imperative Module)
+```typescript
+// These must NOT live in React component state
+drawLog: DrawEvent[]        // Authoritative replay log
+pendingStroke: Stroke | null  // Optimistic local stroke
+cursors: Map<userId, Cursor>  // Ephemeral presence
+users: Map<userId, UserIdentity>  // Presence list for UI
+```
+
+### Drawing Flow
+1. `pointerdown` → start stroke
+2. `pointermove` → collect points + draw locally (optimistic)
+3. `pointerup` → send stroke event to server
+4. Server assigns `seq`, persists, broadcasts
+5. Client receives authoritative event, reconciles with optimistic
+
+## Data Models
+
+### DrawEvent (Immutable, Append-only)
+```typescript
+interface DrawEvent {
+  boardId: string
+  seq: number           // Server-assigned, authoritative
+  type: 'stroke' | 'clear'
+  userId: string
+  timestamp: number
+  payload: {
+    color?: string
+    width?: number
+    points?: [number, number][]
+  }
+}
+```
+
+### UserIdentity
+```typescript
+interface UserIdentity {
+  userId: string
+  displayName: string
+  isAnonymous: boolean
+  avatarColor?: string
+}
+```
+
+### PresenceState
+```typescript
+interface PresenceState {
+  boardId: string
+  userId: string
+  displayName: string
+  isAnonymous: boolean
+  cursor?: { x: number; y: number; t: number }
+  connectedAt: number
+}
+```
+
+## WebSocket Protocol
+
+### Client → Server
+- `HELLO` — Join board with identity
+- `DRAW_EVENT` — Submit stroke
+- `CURSOR_MOVE` — Update cursor position (throttled 30-60ms)
+- `LEAVE_BOARD` — Optional explicit leave
+
+### Server → Client
+- `SYNC_SNAPSHOT` — Full ordered event list for board
+- `DRAW_EVENT` — Authoritative broadcasted event
+- `CURSOR_MOVE` — Other user cursor updates
+- `USER_LIST` — Full presence list
+- `USER_JOIN` — User joined board
+- `USER_LEAVE` — User left board
+- `ERROR` — Error response
+
+## Database Schema (Postgres)
+
+```sql
+CREATE TABLE boards (
+  id TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  name TEXT
+);
+
+CREATE TABLE drawing_events (
+  board_id TEXT NOT NULL REFERENCES boards(id),
+  seq BIGINT NOT NULL,
+  event JSONB NOT NULL,
+  PRIMARY KEY (board_id, seq)
+);
+```
+
+## Routes
+- `/` — Global board (boardId="global")
+- `/login` — Auth flow
+- `/b/:boardId` — Breakout room board (future)
+
+## UI Components
+
+### Navbar
+- Home link
+- Login link (if anonymous) / Logout + Profile (if signed in)
+
+### Side Card (User List)
+- Current users on board
+- Anonymous vs signed-in indicator
+- Optional cursor color dot
+
+## Explicit Non-Goals (MVP)
+- No CRDTs
+- No SVG rendering
+- No pixel diff syncing
+- No undo (initial version)
+- No access control for rooms (initially)
+- No moderation tools (initially)
+
+## Implementation Sequence
+1. Frontend React shell (routes, navbar, layout)
+2. WebSocket server skeleton (connection handling, message routing)
+3. HELLO + presence (join rooms, USER_LIST/JOIN/LEAVE)
+4. Persistence (Postgres schema, replay query)
+5. Drawing pipeline (stroke capture, seq assignment, broadcast)
+6. Cursor pipeline (throttled moves, overlay renderer)
+7. Replay determinism validation
+8. Optional: compaction (live → history merge)
+
+## Performance Guidelines
+- Throttle cursor updates to 30-60ms
+- Compact strokes to history layer periodically
+- Never re-render full history on each frame
+- Use requestAnimationFrame for cursor overlay only
+
+## Scaling Path
+1. **MVP**: Single Node.js server, in-memory presence, managed Postgres
+2. **Phase 2**: Multiple WS servers, sticky sessions, Redis Pub/Sub
+3. **Phase 3**: Partition by boardId, snapshot compaction, event chunking
