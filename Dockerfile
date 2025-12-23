@@ -53,9 +53,7 @@ COPY --from=builder /app/packages/client/dist ./packages/server/public
 
 # Set environment
 ENV NODE_ENV=production
-ENV PORT=3001
-
-EXPOSE 3001
+# Note: Railway injects PORT automatically, don't hardcode it
 
 # Start server
 CMD ["node", "packages/server/dist/index.js"]
