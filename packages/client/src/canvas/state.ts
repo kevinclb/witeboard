@@ -7,6 +7,94 @@ import type { DrawEvent } from '@witeboard/shared';
  * React re-renders must not drive drawing.
  */
 
+// ============================================================================
+// Viewport (Pan/Zoom) - Local per client, NOT synced
+// ============================================================================
+
+export interface Viewport {
+  offsetX: number;  // Pan offset in screen pixels
+  offsetY: number;
+  scale: number;    // Zoom level (1 = 100%)
+}
+
+export const viewport: Viewport = {
+  offsetX: 0,
+  offsetY: 0,
+  scale: 1,
+};
+
+// Zoom constraints
+const MIN_SCALE = 0.1;
+const MAX_SCALE = 5;
+
+/**
+ * Convert screen coordinates to world coordinates
+ */
+export function screenToWorld(screenX: number, screenY: number): [number, number] {
+  return [
+    (screenX - viewport.offsetX) / viewport.scale,
+    (screenY - viewport.offsetY) / viewport.scale,
+  ];
+}
+
+/**
+ * Convert world coordinates to screen coordinates
+ */
+export function worldToScreen(worldX: number, worldY: number): [number, number] {
+  return [
+    worldX * viewport.scale + viewport.offsetX,
+    worldY * viewport.scale + viewport.offsetY,
+  ];
+}
+
+/**
+ * Zoom toward a screen point (keeps that point stationary)
+ */
+export function zoomAtPoint(screenX: number, screenY: number, delta: number): void {
+  const zoomFactor = delta > 0 ? 0.9 : 1.1;
+  const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, viewport.scale * zoomFactor));
+  
+  if (newScale === viewport.scale) return;
+
+  // Get world point under cursor before zoom
+  const [worldX, worldY] = screenToWorld(screenX, screenY);
+  
+  // Apply new scale
+  viewport.scale = newScale;
+  
+  // Adjust offset so world point stays under cursor
+  viewport.offsetX = screenX - worldX * viewport.scale;
+  viewport.offsetY = screenY - worldY * viewport.scale;
+}
+
+/**
+ * Pan the viewport by screen pixels
+ */
+export function pan(deltaX: number, deltaY: number): void {
+  viewport.offsetX += deltaX;
+  viewport.offsetY += deltaY;
+}
+
+/**
+ * Reset viewport to default
+ */
+export function resetViewport(): void {
+  viewport.offsetX = 0;
+  viewport.offsetY = 0;
+  viewport.scale = 1;
+}
+
+/**
+ * Get current zoom percentage for display
+ */
+export function getZoomPercent(): number {
+  return Math.round(viewport.scale * 100);
+}
+
+// ============================================================================
+// Drawing State
+// ============================================================================
+
 // Authoritative replay log for current board
 export let drawLog: DrawEvent[] = [];
 
@@ -14,14 +102,14 @@ export let drawLog: DrawEvent[] = [];
 export interface PendingStroke {
   color: string;
   width: number;
-  points: [number, number][];
+  points: [number, number][]; // World coordinates
 }
 export let pendingStroke: PendingStroke | null = null;
 
-// Remote cursors
+// Remote cursors (world coordinates)
 export interface RemoteCursor {
-  x: number;
-  y: number;
+  x: number;  // World X
+  y: number;  // World Y
   displayName: string;
   avatarColor?: string;
   lastUpdate: number;
@@ -40,13 +128,17 @@ let historyCtx: CanvasRenderingContext2D | null = null;
 let liveCtx: CanvasRenderingContext2D | null = null;
 let cursorCtx: CanvasRenderingContext2D | null = null;
 
+// Device pixel ratio for sharp rendering
+let dpr = 1;
+
 /**
  * Initialize canvas references
  */
 export function initCanvases(
   history: HTMLCanvasElement,
   live: HTMLCanvasElement,
-  cursor: HTMLCanvasElement
+  cursor: HTMLCanvasElement,
+  devicePixelRatio: number = 1
 ): void {
   historyCanvas = history;
   liveCanvas = live;
@@ -54,6 +146,7 @@ export function initCanvases(
   historyCtx = history.getContext('2d');
   liveCtx = live.getContext('2d');
   cursorCtx = cursor.getContext('2d');
+  dpr = devicePixelRatio;
 
   // Set line rendering style
   if (historyCtx) {
@@ -67,12 +160,12 @@ export function initCanvases(
 }
 
 /**
- * Get canvas dimensions
+ * Get canvas dimensions (in CSS pixels, not device pixels)
  */
 export function getCanvasSize(): { width: number; height: number } {
   return {
-    width: historyCanvas?.width || 0,
-    height: historyCanvas?.height || 0,
+    width: (historyCanvas?.width || 0) / dpr,
+    height: (historyCanvas?.height || 0) / dpr,
   };
 }
 
@@ -83,6 +176,7 @@ export function clearState(): void {
   drawLog = [];
   pendingStroke = null;
   cursors.clear();
+  resetViewport();
   clearAllCanvases();
 }
 
@@ -113,35 +207,54 @@ export function clearCursorCanvas(): void {
 }
 
 /**
- * Draw a stroke on a canvas context
+ * Apply viewport transform to a context
+ */
+function applyViewportTransform(ctx: CanvasRenderingContext2D): void {
+  ctx.translate(viewport.offsetX, viewport.offsetY);
+  ctx.scale(viewport.scale, viewport.scale);
+}
+
+/**
+ * Draw a stroke on a canvas context (in world coordinates)
  */
 function drawStrokeOnContext(
   ctx: CanvasRenderingContext2D,
   points: [number, number][],
   color: string,
-  width: number
+  width: number,
+  applyTransform: boolean = true
 ): void {
-  if (points.length < 2) {
+  if (points.length < 1) return;
+
+  ctx.save();
+  
+  if (applyTransform) {
+    applyViewportTransform(ctx);
+  }
+
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  if (points.length === 1) {
     // Single point - draw a dot
-    if (points.length === 1) {
-      ctx.beginPath();
-      ctx.fillStyle = color;
-      ctx.arc(points[0][0], points[0][1], width / 2, 0, Math.PI * 2);
-      ctx.fill();
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(points[0][0], points[0][1], width / 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.moveTo(points[0][0], points[0][1]);
+
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i][0], points[i][1]);
     }
-    return;
+
+    ctx.stroke();
   }
 
-  ctx.beginPath();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.moveTo(points[0][0], points[0][1]);
-
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i][0], points[i][1]);
-  }
-
-  ctx.stroke();
+  ctx.restore();
 }
 
 /**
@@ -178,22 +291,30 @@ export function drawSegmentToLive(
   width: number
 ): void {
   if (!liveCtx) return;
+  
+  liveCtx.save();
+  applyViewportTransform(liveCtx);
+  
+  liveCtx.lineCap = 'round';
+  liveCtx.lineJoin = 'round';
   liveCtx.beginPath();
   liveCtx.strokeStyle = color;
   liveCtx.lineWidth = width;
   liveCtx.moveTo(from[0], from[1]);
   liveCtx.lineTo(to[0], to[1]);
   liveCtx.stroke();
+  
+  liveCtx.restore();
 }
 
 /**
- * Replay all events to rebuild the canvas
+ * Redraw all content with current viewport
  */
-export function replayAll(events: DrawEvent[]): void {
+export function redrawAll(): void {
   clearAllCanvases();
-  drawLog = events;
 
-  for (const event of events) {
+  // Replay all strokes with current viewport
+  for (const event of drawLog) {
     if (event.type === 'stroke' && event.payload.points) {
       drawStrokeToHistory(
         event.payload.points,
@@ -204,6 +325,14 @@ export function replayAll(events: DrawEvent[]): void {
       clearAllCanvases();
     }
   }
+}
+
+/**
+ * Replay all events to rebuild the canvas
+ */
+export function replayAll(events: DrawEvent[]): void {
+  drawLog = events;
+  redrawAll();
 }
 
 /**
@@ -225,27 +354,27 @@ export function applyDrawEvent(event: DrawEvent): void {
 }
 
 /**
- * Start a new pending stroke
+ * Start a new pending stroke (in world coordinates)
  */
-export function startStroke(x: number, y: number): void {
+export function startStroke(worldX: number, worldY: number): void {
   pendingStroke = {
     color: currentColor,
     width: currentWidth,
-    points: [[x, y]],
+    points: [[worldX, worldY]],
   };
 }
 
 /**
- * Continue the pending stroke
+ * Continue the pending stroke (in world coordinates)
  */
-export function continueStroke(x: number, y: number): void {
+export function continueStroke(worldX: number, worldY: number): void {
   if (!pendingStroke) return;
 
   const lastPoint = pendingStroke.points[pendingStroke.points.length - 1];
-  pendingStroke.points.push([x, y]);
+  pendingStroke.points.push([worldX, worldY]);
 
   // Draw segment optimistically
-  drawSegmentToLive(lastPoint, [x, y], pendingStroke.color, pendingStroke.width);
+  drawSegmentToLive(lastPoint, [worldX, worldY], pendingStroke.color, pendingStroke.width);
 }
 
 /**
@@ -258,18 +387,18 @@ export function endStroke(): PendingStroke | null {
 }
 
 /**
- * Update remote cursor position
+ * Update remote cursor position (in world coordinates)
  */
 export function updateRemoteCursor(
   userId: string,
-  x: number,
-  y: number,
+  worldX: number,
+  worldY: number,
   displayName: string,
   avatarColor?: string
 ): void {
   cursors.set(userId, {
-    x,
-    y,
+    x: worldX,
+    y: worldY,
     displayName,
     avatarColor,
     lastUpdate: Date.now(),
@@ -284,7 +413,7 @@ export function removeRemoteCursor(userId: string): void {
 }
 
 /**
- * Render all remote cursors
+ * Render all remote cursors (converts world to screen)
  */
 export function renderCursors(): void {
   if (!cursorCtx) return;
@@ -301,21 +430,23 @@ export function renderCursors(): void {
       continue;
     }
 
-    const { x, y, displayName, avatarColor } = cursor;
+    // Convert world to screen coordinates
+    const [screenX, screenY] = worldToScreen(cursor.x, cursor.y);
+    const { displayName, avatarColor } = cursor;
     const color = avatarColor || '#888888';
 
-    // Draw cursor pointer
+    // Draw cursor pointer (fixed size on screen)
     cursorCtx.beginPath();
     cursorCtx.fillStyle = color;
     
     // Triangle cursor shape
-    cursorCtx.moveTo(x, y);
-    cursorCtx.lineTo(x, y + 16);
-    cursorCtx.lineTo(x + 4, y + 12);
-    cursorCtx.lineTo(x + 10, y + 18);
-    cursorCtx.lineTo(x + 12, y + 16);
-    cursorCtx.lineTo(x + 6, y + 10);
-    cursorCtx.lineTo(x + 10, y + 6);
+    cursorCtx.moveTo(screenX, screenY);
+    cursorCtx.lineTo(screenX, screenY + 16);
+    cursorCtx.lineTo(screenX + 4, screenY + 12);
+    cursorCtx.lineTo(screenX + 10, screenY + 18);
+    cursorCtx.lineTo(screenX + 12, screenY + 16);
+    cursorCtx.lineTo(screenX + 6, screenY + 10);
+    cursorCtx.lineTo(screenX + 10, screenY + 6);
     cursorCtx.closePath();
     cursorCtx.fill();
 
@@ -323,8 +454,8 @@ export function renderCursors(): void {
     cursorCtx.font = '11px JetBrains Mono, monospace';
     const textWidth = cursorCtx.measureText(displayName).width;
     const padding = 4;
-    const labelX = x + 14;
-    const labelY = y + 8;
+    const labelX = screenX + 14;
+    const labelY = screenY + 8;
 
     // Label background
     cursorCtx.fillStyle = color;
@@ -357,14 +488,11 @@ export function setWidth(width: number): void {
 
 /**
  * Compact live canvas to history (for performance)
+ * Note: With viewport, we need to redraw rather than copy pixels
  */
 export function compactToHistory(): void {
   if (!historyCtx || !liveCanvas) return;
   
-  // Draw live canvas onto history
-  historyCtx.drawImage(liveCanvas, 0, 0);
-  
-  // Clear live canvas
-  clearLiveCanvas();
+  // Redraw everything to history
+  redrawAll();
 }
-

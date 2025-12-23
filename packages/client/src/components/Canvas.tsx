@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { wsClient } from '../ws/client';
 import { usePresenceStore } from '../stores/presence';
 import { throttle } from '@witeboard/shared';
@@ -15,6 +15,13 @@ import {
   renderCursors,
   compactToHistory,
   drawLog,
+  screenToWorld,
+  zoomAtPoint,
+  pan,
+  redrawAll,
+  viewport,
+  getZoomPercent,
+  resetViewport,
 } from '../canvas/state';
 import type { ServerMessage } from '@witeboard/shared';
 import styles from './Canvas.module.css';
@@ -33,7 +40,13 @@ export default function Canvas({ boardId }: CanvasProps) {
   const cursorRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawing = useRef(false);
+  const isPanning = useRef(false);
+  const lastPanPos = useRef<{ x: number; y: number } | null>(null);
+  const spacePressed = useRef(false);
   const animationFrameRef = useRef<number>(0);
+
+  // Track zoom for display (triggers re-render for zoom indicator)
+  const [zoomLevel, setZoomLevel] = useState(100);
 
   const currentUserId = usePresenceStore((state) => state.currentUser?.userId);
 
@@ -63,10 +76,10 @@ export default function Canvas({ boardId }: CanvasProps) {
     });
 
     // Re-initialize contexts
-    initCanvases(history, live, cursor);
+    initCanvases(history, live, cursor, dpr);
 
-    // Replay all events to restore state
-    replayAll(drawLog);
+    // Redraw with current viewport
+    redrawAll();
   }, []);
 
   // Handle window resize
@@ -74,6 +87,37 @@ export default function Canvas({ boardId }: CanvasProps) {
     window.addEventListener('resize', resizeCanvases);
     return () => window.removeEventListener('resize', resizeCanvases);
   }, [resizeCanvases]);
+
+  // Handle keyboard for space (pan mode)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat) {
+        spacePressed.current = true;
+        if (containerRef.current) {
+          containerRef.current.style.cursor = 'grab';
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        spacePressed.current = false;
+        isPanning.current = false;
+        lastPanPos.current = null;
+        if (containerRef.current) {
+          containerRef.current.style.cursor = 'crosshair';
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
 
   // Initialize canvases and subscribe to messages
   useEffect(() => {
@@ -84,7 +128,8 @@ export default function Canvas({ boardId }: CanvasProps) {
     if (!history || !live || !cursor) return;
 
     // Initialize
-    initCanvases(history, live, cursor);
+    const dpr = window.devicePixelRatio || 1;
+    initCanvases(history, live, cursor, dpr);
     resizeCanvases();
 
     // Subscribe to server messages
@@ -94,6 +139,7 @@ export default function Canvas({ boardId }: CanvasProps) {
           clearState();
           replayAll(message.payload.events);
           strokesSinceCompact = 0;
+          setZoomLevel(100);
           break;
 
         case 'DRAW_EVENT':
@@ -139,55 +185,101 @@ export default function Canvas({ boardId }: CanvasProps) {
     };
   }, [boardId, currentUserId, resizeCanvases]);
 
-  // Throttled cursor move
+  // Throttled cursor move (sends world coordinates)
   const throttledCursorMove = useCallback(
-    throttle((x: number, y: number) => {
-      wsClient.sendCursorMove(x, y);
+    throttle((worldX: number, worldY: number) => {
+      wsClient.sendCursorMove(worldX, worldY);
     }, 50),
     []
   );
 
-  // Get pointer position relative to canvas
-  const getPointerPos = (e: React.PointerEvent): [number, number] => {
-    const canvas = liveRef.current;
-    if (!canvas) return [0, 0];
+  // Get pointer position relative to canvas (screen coordinates)
+  const getScreenPos = (e: React.PointerEvent | React.WheelEvent): { x: number; y: number } => {
+    const canvas = cursorRef.current;
+    if (!canvas) return { x: 0, y: 0 };
 
     const rect = canvas.getBoundingClientRect();
-    return [e.clientX - rect.left, e.clientY - rect.top];
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
+
+  // Handle wheel for zoom
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    
+    const { x, y } = getScreenPos(e);
+    zoomAtPoint(x, y, e.deltaY);
+    redrawAll();
+    setZoomLevel(getZoomPercent());
+  }, []);
 
   // Pointer event handlers
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return; // Only left click
+    const { x: screenX, y: screenY } = getScreenPos(e);
+
+    // Middle mouse button OR space+left click = pan
+    if (e.button === 1 || (e.button === 0 && spacePressed.current)) {
+      isPanning.current = true;
+      lastPanPos.current = { x: screenX, y: screenY };
+      if (containerRef.current) {
+        containerRef.current.style.cursor = 'grabbing';
+      }
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Left click = draw
+    if (e.button !== 0) return;
 
     isDrawing.current = true;
-    const [x, y] = getPointerPos(e);
-    startStroke(x, y);
+    const [worldX, worldY] = screenToWorld(screenX, screenY);
+    startStroke(worldX, worldY);
 
     // Capture pointer for smooth drawing outside canvas
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    const [x, y] = getPointerPos(e);
+    const { x: screenX, y: screenY } = getScreenPos(e);
+    const [worldX, worldY] = screenToWorld(screenX, screenY);
 
-    // Always send cursor position
-    throttledCursorMove(x, y);
+    // Handle panning
+    if (isPanning.current && lastPanPos.current) {
+      const dx = screenX - lastPanPos.current.x;
+      const dy = screenY - lastPanPos.current.y;
+      pan(dx, dy);
+      lastPanPos.current = { x: screenX, y: screenY };
+      redrawAll();
+      return;
+    }
+
+    // Always send cursor position (world coordinates)
+    throttledCursorMove(worldX, worldY);
 
     // Continue stroke if drawing
     if (isDrawing.current) {
-      continueStroke(x, y);
+      continueStroke(worldX, worldY);
     }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    // End pan
+    if (isPanning.current) {
+      isPanning.current = false;
+      lastPanPos.current = null;
+      if (containerRef.current) {
+        containerRef.current.style.cursor = spacePressed.current ? 'grab' : 'crosshair';
+      }
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      return;
+    }
+
     if (!isDrawing.current) return;
 
     isDrawing.current = false;
     const stroke = endStroke();
 
     if (stroke && stroke.points.length > 0) {
-      // Send to server
+      // Send to server (world coordinates)
       wsClient.sendDrawEvent('stroke', {
         color: stroke.color,
         width: stroke.width,
@@ -199,6 +291,15 @@ export default function Canvas({ boardId }: CanvasProps) {
   };
 
   const handlePointerLeave = () => {
+    // End pan
+    if (isPanning.current) {
+      isPanning.current = false;
+      lastPanPos.current = null;
+      if (containerRef.current) {
+        containerRef.current.style.cursor = 'crosshair';
+      }
+    }
+
     // End stroke if we leave the canvas
     if (isDrawing.current) {
       isDrawing.current = false;
@@ -212,6 +313,12 @@ export default function Canvas({ boardId }: CanvasProps) {
         });
       }
     }
+  };
+
+  const handleResetView = () => {
+    resetViewport();
+    redrawAll();
+    setZoomLevel(100);
   };
 
   return (
@@ -230,8 +337,48 @@ export default function Canvas({ boardId }: CanvasProps) {
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
+        onWheel={handleWheel}
       />
+
+      {/* Zoom indicator */}
+      <div className={styles.zoomIndicator}>
+        <button
+          className={styles.zoomButton}
+          onClick={() => {
+            const center = getScreenPos({ clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 } as React.WheelEvent);
+            zoomAtPoint(center.x, center.y, 100); // zoom out
+            redrawAll();
+            setZoomLevel(getZoomPercent());
+          }}
+          title="Zoom out"
+        >
+          −
+        </button>
+        <button
+          className={styles.zoomLevel}
+          onClick={handleResetView}
+          title="Reset view"
+        >
+          {zoomLevel}%
+        </button>
+        <button
+          className={styles.zoomButton}
+          onClick={() => {
+            const center = getScreenPos({ clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 } as React.WheelEvent);
+            zoomAtPoint(center.x, center.y, -100); // zoom in
+            redrawAll();
+            setZoomLevel(getZoomPercent());
+          }}
+          title="Zoom in"
+        >
+          +
+        </button>
+      </div>
+
+      {/* Pan hint */}
+      <div className={styles.panHint}>
+        <span>Scroll to zoom • Space+drag or middle-click to pan</span>
+      </div>
     </div>
   );
 }
-
