@@ -51,14 +51,14 @@ export function generateUUID(): string {
 /**
  * Throttle function - limits how often a function can be called
  */
-export function throttle<T extends (...args: unknown[]) => void>(
-  fn: T,
+export function throttle<Args extends unknown[]>(
+  fn: (...args: Args) => void,
   delay: number
-): T {
+): (...args: Args) => void {
   let lastCall = 0;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-  return ((...args: unknown[]) => {
+  return (...args: Args) => {
     const now = Date.now();
     const timeSinceLastCall = now - lastCall;
 
@@ -72,6 +72,6 @@ export function throttle<T extends (...args: unknown[]) => void>(
         fn(...args);
       }, delay - timeSinceLastCall);
     }
-  }) as T;
+  };
 }
 
