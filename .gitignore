@@ -64,3 +64,6 @@ docker-compose.override.yml
 *.tmp
 .cache/
 
+# Cursor ideas/notes
+.cursor/ideas/
+
