@@ -107,6 +107,22 @@ Or deploy manually:
 
 **Note:** For Clerk authentication, add `VITE_CLERK_PUBLISHABLE_KEY` as a **build argument** in Railway (it's embedded at build time, not runtime). Set `CLERK_SECRET_KEY` as a regular environment variable.
 
+### Before You Push (Deployment Checklist)
+
+```bash
+# 1. Build locally to catch TypeScript errors
+pnpm build
+
+# 2. Stage ALL changes (new files, package.json, lockfile)
+git add -A
+
+# 3. Commit and push
+git commit -m "feat: your feature"
+git push origin main
+```
+
+⚠️ **Common mistake:** Adding a dependency with `pnpm add` modifies `package.json` and `pnpm-lock.yaml`. Both must be committed or Railway build will fail with "Cannot find module".
+
 ### Manual Deployment
 
 ```bash

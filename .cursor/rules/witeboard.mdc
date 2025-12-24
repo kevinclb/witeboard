@@ -199,40 +199,43 @@ CREATE TABLE drawing_events (
 
 ## Implementation Checklist (CRITICAL)
 
-Before completing ANY feature implementation:
+**BEFORE pushing ANY changes, run this sequence:**
 
-### 1. Local TypeScript Check
 ```bash
-pnpm build   # MUST pass without errors
-```
-This runs `tsc` and catches type errors that Railway will hit. **Never push without running this.**
+# 1. Build locally (catches TS errors Railway will hit)
+pnpm build
 
-### 2. Git Status Check
-After creating new files, verify they're tracked:
-```bash
+# 2. Check git status for uncommitted files  
 git status
-```
-New files show as `??` (untracked). **Add and commit them** before pushing:
-```bash
-git add <new-files>
+
+# 3. Stage ALL changes (including package.json, lockfiles, new files)
+git add -A
+
+# 4. Commit and push
 git commit -m "feat: description"
+git push origin main
 ```
 
-### 3. Common Railway Build Failures
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `Cannot find module './path/File'` | New file not committed | `git add` the file |
-| `TS2345: Argument type mismatch` | Stricter TS in prod build | Fix types, run `pnpm build` locally |
-| `ERR_MODULE_NOT_FOUND: ...shared/dist/...` | Shared package not built | Ensure `pnpm build` runs shared first |
-| `verifyToken is not a function` | Wrong Clerk API usage | Check `@clerk/backend` docs for correct API |
+### What Gets Missed (Common Failures)
 
-### 4. Monorepo Build Order
-The Dockerfile builds in this order:
+| Symptom | Root Cause | What to Commit |
+|---------|------------|----------------|
+| `Cannot find module './path/File'` | New source file not committed | The `.tsx`/`.ts` file |
+| `Cannot find module 'package-name'` | Dependency added but package.json not committed | `package.json` + `pnpm-lock.yaml` |
+| `TS2345: Argument type mismatch` | Local dev uses esbuild (no type check), prod uses tsc | Fix types, run `pnpm build` |
+| `ERR_MODULE_NOT_FOUND: ...shared/dist/...` | Shared package exports wrong path | Check `packages/shared/package.json` exports |
+
+### Why This Happens
+- **`pnpm add`** modifies `package.json` and `pnpm-lock.yaml` — both must be committed
+- **New files** are untracked by default (`??` in git status)
+- **Local dev** uses esbuild which skips type checking; **prod build** uses tsc which is strict
+
+### Monorepo Build Order (Dockerfile)
 1. `@witeboard/shared` → generates `dist/` with `.js` and `.d.ts`
 2. `@witeboard/client` → runs `tsc` then Vite
 3. `@witeboard/server` → runs `tsc`
 
-If shared types change, the client/server MUST rebuild.
+Dependencies added to ANY package require committing the root `pnpm-lock.yaml`.
 
 ## Deployment
 
