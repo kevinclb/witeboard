@@ -3,9 +3,12 @@ import type { ToolType } from '@witeboard/shared';
 import {
   setTool,
   setColor,
+  setFontSize,
   getCurrentTool,
   getCurrentColor,
+  getCurrentFontSize,
   COLOR_PALETTE,
+  FONT_SIZES,
 } from '../canvas/state';
 import styles from './ToolPalette.module.css';
 
@@ -43,6 +46,17 @@ const TOOLS: { type: ToolType; label: string; icon: JSX.Element }[] = [
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08" />
         <path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z" />
+      </svg>
+    ),
+  },
+  {
+    type: 'text',
+    label: 'Text',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M4 7V4h16v3" />
+        <path d="M12 4v16" />
+        <path d="M8 20h8" />
       </svg>
     ),
   },
@@ -89,6 +103,7 @@ const TOOLS: { type: ToolType; label: string; icon: JSX.Element }[] = [
 export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
   const [activeTool, setActiveTool] = useState<ToolType>(getCurrentTool());
   const [activeColor, setActiveColor] = useState<string>(getCurrentColor());
+  const [activeFontSize, setActiveFontSize] = useState<number>(getCurrentFontSize());
 
   const handleToolClick = useCallback((tool: ToolType) => {
     setTool(tool);
@@ -101,8 +116,15 @@ export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
     setActiveColor(color);
   }, []);
 
+  const handleFontSizeClick = useCallback((size: number) => {
+    setFontSize(size);
+    setActiveFontSize(size);
+  }, []);
+
   // Check if current tool supports color (eraser doesn't)
   const supportsColor = activeTool !== 'eraser';
+  // Check if text tool is selected
+  const isTextTool = activeTool === 'text';
 
   return (
     <div className={styles.palette}>
@@ -122,6 +144,25 @@ export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
 
       {/* Divider */}
       <div className={styles.divider} />
+
+      {/* Font size section (only for text tool) */}
+      {isTextTool && (
+        <>
+          <div className={styles.fontSizes}>
+            {FONT_SIZES.map((size) => (
+              <button
+                key={size}
+                className={`${styles.fontSizeButton} ${activeFontSize === size ? styles.active : ''}`}
+                onClick={() => handleFontSizeClick(size)}
+                title={`${size}px`}
+              >
+                {size}
+              </button>
+            ))}
+          </div>
+          <div className={styles.divider} />
+        </>
+      )}
 
       {/* Colors section */}
       <div className={styles.colors}>

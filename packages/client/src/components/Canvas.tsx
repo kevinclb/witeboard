@@ -21,6 +21,7 @@ import {
   compactToHistory,
   drawLog,
   screenToWorld,
+  worldToScreen,
   zoomAtPoint,
   pan,
   redrawAll,
@@ -28,12 +29,25 @@ import {
   getZoomPercent,
   resetViewport,
   getCurrentTool,
+  getCurrentColor,
+  getCurrentFontSize,
   currentColor,
   currentWidth,
   currentOpacity,
 } from '../canvas/state';
 import ToolPalette from './ToolPalette';
 import styles from './Canvas.module.css';
+
+// Text input state
+interface TextInputState {
+  visible: boolean;
+  worldX: number;
+  worldY: number;
+  screenX: number;
+  screenY: number;
+  text: string;
+  strokeId: string;
+}
 
 interface CanvasProps {
   boardId: string;
@@ -59,6 +73,18 @@ export default function Canvas({ boardId }: CanvasProps) {
   const [zoomLevel, setZoomLevel] = useState(100);
   // Track current tool for cursor updates
   const [activeTool, setActiveTool] = useState<ToolType>('pencil');
+  // Text input state
+  const [textInput, setTextInput] = useState<TextInputState>({
+    visible: false,
+    worldX: 0,
+    worldY: 0,
+    screenX: 0,
+    screenY: 0,
+    text: '',
+    strokeId: '',
+  });
+  const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const textInputJustOpened = useRef(false);
 
   const currentUserId = usePresenceStore((state) => state.currentUser?.userId);
 
@@ -254,6 +280,44 @@ export default function Canvas({ boardId }: CanvasProps) {
       return;
     }
 
+    // Handle text tool
+    if (tool === 'text') {
+      // If there's already an open text input, submit it first
+      if (textInput.visible && textInput.text.trim()) {
+        wsClient.sendDrawEvent('text', {
+          strokeId: textInput.strokeId,
+          text: textInput.text.trim(),
+          position: [textInput.worldX, textInput.worldY] as [number, number],
+          color: getCurrentColor(),
+          fontSize: getCurrentFontSize(),
+        });
+      }
+      
+      // Mark as just opened to prevent immediate blur from closing it
+      textInputJustOpened.current = true;
+      
+      // Show text input at click position
+      setTextInput({
+        visible: true,
+        worldX,
+        worldY,
+        screenX,
+        screenY,
+        text: '',
+        strokeId: generateUUID(),
+      });
+      
+      // Focus the input after a small delay to ensure it's rendered
+      setTimeout(() => {
+        textInputRef.current?.focus();
+        // Clear the "just opened" flag after focus is established
+        setTimeout(() => {
+          textInputJustOpened.current = false;
+        }, 200);
+      }, 10);
+      return;
+    }
+
     // Handle shape tools
     if (tool === 'rectangle' || tool === 'ellipse' || tool === 'line') {
       isShaping.current = true;
@@ -364,6 +428,8 @@ export default function Canvas({ boardId }: CanvasProps) {
     switch (tool) {
       case 'eraser':
         return 'pointer';
+      case 'text':
+        return 'text';
       case 'rectangle':
       case 'ellipse':
       case 'line':
@@ -438,6 +504,48 @@ export default function Canvas({ boardId }: CanvasProps) {
     setZoomLevel(100);
   };
 
+  // Submit text and close input
+  const submitText = useCallback(() => {
+    if (textInput.text.trim()) {
+      wsClient.sendDrawEvent('text', {
+        strokeId: textInput.strokeId,
+        text: textInput.text.trim(),
+        position: [textInput.worldX, textInput.worldY] as [number, number],
+        color: getCurrentColor(),
+        fontSize: getCurrentFontSize(),
+      });
+    }
+    setTextInput(prev => ({ ...prev, visible: false, text: '' }));
+  }, [textInput]);
+
+  // Handle text input key events
+  const handleTextKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Escape') {
+      // Cancel text input
+      setTextInput(prev => ({ ...prev, visible: false, text: '' }));
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      // Submit on Enter (Shift+Enter for new line)
+      e.preventDefault();
+      submitText();
+    }
+  }, [submitText]);
+
+  // Handle text input blur (click outside)
+  const handleTextBlur = useCallback(() => {
+    // Ignore blur if the input was just opened (prevents immediate closing)
+    if (textInputJustOpened.current) {
+      return;
+    }
+    
+    // Small delay to allow clicking on canvas for a new text position
+    setTimeout(() => {
+      // Double-check we're not in the "just opened" state
+      if (!textInputJustOpened.current) {
+        submitText();
+      }
+    }, 150);
+  }, [submitText]);
+
   return (
     <div ref={containerRef} className={styles.container}>
       {/* History canvas - bottom layer */}
@@ -459,6 +567,27 @@ export default function Canvas({ boardId }: CanvasProps) {
 
       {/* Tool palette */}
       <ToolPalette onToolChange={handleToolChange} />
+
+      {/* Text input overlay */}
+      {textInput.visible && (
+        <textarea
+          ref={textInputRef}
+          className={styles.textInput}
+          style={{
+            left: textInput.screenX,
+            top: textInput.screenY,
+            fontSize: `${getCurrentFontSize() * viewport.scale}px`,
+            color: getCurrentColor(),
+          }}
+          value={textInput.text}
+          onChange={(e) => setTextInput(prev => ({ ...prev, text: e.target.value }))}
+          onKeyDown={handleTextKeyDown}
+          onBlur={handleTextBlur}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          placeholder="Type here..."
+        />
+      )}
 
       {/* Zoom indicator */}
       <div className={styles.zoomIndicator}>

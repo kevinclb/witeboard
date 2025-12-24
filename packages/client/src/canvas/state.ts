@@ -1,5 +1,5 @@
 import type { DrawEvent, ToolType, ShapeType } from '@witeboard/shared';
-import { generateUUID, isStrokePayload, isShapePayload, isDeletePayload } from '@witeboard/shared';
+import { generateUUID, isStrokePayload, isShapePayload, isDeletePayload, isTextPayload } from '@witeboard/shared';
 
 /**
  * Canvas Engine State - Imperative module (NOT React state)
@@ -174,6 +174,10 @@ export const COLOR_PALETTE = [
   '#1a1a1a', // Black
 ];
 
+// Text font sizes
+export const FONT_SIZES = [16, 24, 32, 48, 64];
+export const DEFAULT_FONT_SIZE = 24;
+
 // ============================================================================
 // Current Tool State
 // ============================================================================
@@ -182,6 +186,7 @@ export let currentTool: ToolType = 'pencil';
 export let currentColor = '#ffffff';
 export let currentWidth = TOOL_PRESETS.pencil.width;
 export let currentOpacity = TOOL_PRESETS.pencil.opacity;
+export let currentFontSize = DEFAULT_FONT_SIZE;
 
 /**
  * Set the current tool and apply its preset
@@ -618,12 +623,115 @@ function registerShapeBounds(strokeId: string, shapeType: ShapeType, start: [num
 }
 
 /**
+ * Draw text on a canvas context
+ */
+function drawTextOnContext(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  position: [number, number],
+  color: string,
+  fontSize: number,
+  applyTransform: boolean = true
+): void {
+  ctx.save();
+  
+  if (applyTransform) {
+    applyViewportTransform(ctx);
+  }
+  
+  ctx.font = `${fontSize}px "JetBrains Mono", "SF Mono", monospace`;
+  ctx.fillStyle = color;
+  ctx.textBaseline = 'top';
+  
+  const [x, y] = position;
+  
+  // Handle multiline text
+  const lines = text.split('\n');
+  const lineHeight = fontSize * 1.3;
+  
+  lines.forEach((line, index) => {
+    ctx.fillText(line, x, y + index * lineHeight);
+  });
+  
+  ctx.restore();
+}
+
+/**
+ * Draw text on the history canvas
+ */
+export function drawTextToHistory(
+  text: string,
+  position: [number, number],
+  color: string,
+  fontSize: number
+): void {
+  if (!historyCtx) return;
+  drawTextOnContext(historyCtx, text, position, color, fontSize);
+}
+
+/**
+ * Draw text on the live canvas
+ */
+export function drawTextToLive(
+  text: string,
+  position: [number, number],
+  color: string,
+  fontSize: number
+): void {
+  if (!liveCtx) return;
+  drawTextOnContext(liveCtx, text, position, color, fontSize);
+}
+
+/**
+ * Register text in the bounds map for hit-testing
+ */
+function registerTextBounds(strokeId: string, text: string, position: [number, number], color: string, fontSize: number): void {
+  if (!historyCtx) return;
+  
+  const [x, y] = position;
+  
+  // Measure text to get bounds
+  historyCtx.save();
+  historyCtx.font = `${fontSize}px "JetBrains Mono", "SF Mono", monospace`;
+  
+  const lines = text.split('\n');
+  const lineHeight = fontSize * 1.3;
+  let maxWidth = 0;
+  
+  lines.forEach(line => {
+    const metrics = historyCtx!.measureText(line);
+    maxWidth = Math.max(maxWidth, metrics.width);
+  });
+  
+  historyCtx.restore();
+  
+  const totalHeight = lines.length * lineHeight;
+  const padding = 4;
+  
+  const minX = x - padding;
+  const minY = y - padding;
+  const maxX = x + maxWidth + padding;
+  const maxY = y + totalHeight + padding;
+  
+  // Create bounding box points for hit-testing
+  const points: [number, number][] = [
+    [minX, minY],
+    [maxX, minY],
+    [maxX, maxY],
+    [minX, maxY],
+    [minX, minY]
+  ];
+  
+  strokeBoundsMap.set(strokeId, { minX, minY, maxX, maxY, points, color, width: fontSize, opacity: 1 });
+}
+
+/**
  * Redraw all content with current viewport
  */
 export function redrawAll(): void {
   clearAllCanvases();
 
-  // Replay all strokes/shapes with current viewport, skipping deleted ones
+  // Replay all strokes/shapes/text with current viewport, skipping deleted ones
   for (const event of drawLog) {
     if (event.type === 'stroke' && isStrokePayload(event.payload)) {
       // Skip deleted strokes
@@ -646,6 +754,16 @@ export function redrawAll(): void {
         event.payload.color,
         event.payload.width,
         event.payload.opacity ?? 1
+      );
+    } else if (event.type === 'text' && isTextPayload(event.payload)) {
+      // Skip deleted text
+      if (deletedStrokeIds.has(event.payload.strokeId)) continue;
+      
+      drawTextToHistory(
+        event.payload.text,
+        event.payload.position,
+        event.payload.color,
+        event.payload.fontSize
       );
     } else if (event.type === 'clear') {
       clearAllCanvases();
@@ -694,6 +812,16 @@ export function replayAll(events: DrawEvent[]): void {
           event.payload.color,
           event.payload.width,
           event.payload.opacity ?? 1
+        );
+      }
+    } else if (event.type === 'text' && isTextPayload(event.payload)) {
+      if (!deletedStrokeIds.has(event.payload.strokeId)) {
+        registerTextBounds(
+          event.payload.strokeId,
+          event.payload.text,
+          event.payload.position,
+          event.payload.color,
+          event.payload.fontSize
         );
       }
     } else if (event.type === 'clear') {
@@ -749,6 +877,23 @@ export function applyDrawEvent(event: DrawEvent): void {
       event.payload.color,
       event.payload.width,
       event.payload.opacity ?? 1
+    );
+  } else if (event.type === 'text' && isTextPayload(event.payload)) {
+    // Register bounds for hit-testing
+    registerTextBounds(
+      event.payload.strokeId,
+      event.payload.text,
+      event.payload.position,
+      event.payload.color,
+      event.payload.fontSize
+    );
+    
+    // Draw on live canvas
+    drawTextToLive(
+      event.payload.text,
+      event.payload.position,
+      event.payload.color,
+      event.payload.fontSize
     );
   } else if (event.type === 'delete' && isDeletePayload(event.payload)) {
     // Add to deleted set and redraw
@@ -955,6 +1100,20 @@ export function setColor(color: string): void {
  */
 export function setWidth(width: number): void {
   currentWidth = width;
+}
+
+/**
+ * Set current font size
+ */
+export function setFontSize(size: number): void {
+  currentFontSize = size;
+}
+
+/**
+ * Get current font size
+ */
+export function getCurrentFontSize(): number {
+  return currentFontSize;
 }
 
 /**

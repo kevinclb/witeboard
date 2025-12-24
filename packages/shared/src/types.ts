@@ -5,7 +5,7 @@
 /**
  * Tool types for drawing
  */
-export type ToolType = 'pencil' | 'marker' | 'brush' | 'rectangle' | 'ellipse' | 'line' | 'eraser';
+export type ToolType = 'pencil' | 'marker' | 'brush' | 'rectangle' | 'ellipse' | 'line' | 'eraser' | 'text';
 
 /**
  * Shape types
@@ -13,7 +13,7 @@ export type ToolType = 'pencil' | 'marker' | 'brush' | 'rectangle' | 'ellipse' |
 export type ShapeType = 'rectangle' | 'ellipse' | 'line';
 
 /**
- * Drawing event payload - the actual stroke/clear/shape/delete data
+ * Drawing event payload - the actual stroke/clear/shape/delete/text data
  */
 export interface StrokePayload {
   strokeId: string;       // Unique ID for eraser support
@@ -33,6 +33,14 @@ export interface ShapePayload {
   opacity?: number;
 }
 
+export interface TextPayload {
+  strokeId: string;       // Unique ID for eraser support
+  text: string;
+  position: [number, number];  // World coordinates
+  color: string;
+  fontSize: number;
+}
+
 export interface DeletePayload {
   strokeIds: string[];    // Which strokes to delete
 }
@@ -41,13 +49,13 @@ export interface ClearPayload {
   // Empty - clears entire board
 }
 
-export type DrawEventPayload = StrokePayload | ShapePayload | DeletePayload | ClearPayload;
+export type DrawEventPayload = StrokePayload | ShapePayload | TextPayload | DeletePayload | ClearPayload;
 
 /**
  * DrawEvent - Immutable, append-only, server-ordered
  * The server assigns `seq` which is the authoritative ordering per board
  */
-export type DrawEventType = 'stroke' | 'clear' | 'delete' | 'shape';
+export type DrawEventType = 'stroke' | 'clear' | 'delete' | 'shape' | 'text';
 
 export interface DrawEvent {
   boardId: string;
@@ -71,6 +79,10 @@ export function isShapePayload(payload: DrawEventPayload): payload is ShapePaylo
 
 export function isDeletePayload(payload: DrawEventPayload): payload is DeletePayload {
   return 'strokeIds' in payload;
+}
+
+export function isTextPayload(payload: DrawEventPayload): payload is TextPayload {
+  return 'strokeId' in payload && 'text' in payload;
 }
 
 /**

@@ -89,3 +89,26 @@
 .container:hover .panHint {
   opacity: 0;
 }
+
+/* Text input overlay */
+.textInput {
+  position: absolute;
+  min-width: 100px;
+  min-height: 1.5em;
+  max-width: 400px;
+  max-height: 200px;
+  padding: 4px 8px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  background: transparent;
+  border: 2px dashed var(--accent-color);
+  border-radius: 4px;
+  outline: none;
+  resize: none;
+  z-index: 200;
+  caret-color: var(--accent-color);
+}
+
+.textInput::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
