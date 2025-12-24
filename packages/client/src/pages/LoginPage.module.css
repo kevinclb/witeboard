@@ -38,7 +38,20 @@
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-muted);
   margin-bottom: 32px;
+}
+
+.hint code {
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .button {

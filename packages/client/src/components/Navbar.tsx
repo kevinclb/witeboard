@@ -1,9 +1,19 @@
 import { Link } from 'react-router-dom';
+import { SignInButton, UserButton, useUser } from '@clerk/clerk-react';
 import { usePresenceStore } from '../stores/presence';
+import { clerkAppearance } from '../styles/clerkTheme';
 import styles from './Navbar.module.css';
+
+// Check if Clerk is configured via environment variable
+const CLERK_AVAILABLE = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 export default function Navbar() {
   const currentUser = usePresenceStore((state) => state.currentUser);
+  
+  // Only use Clerk hooks if available
+  const { isSignedIn } = CLERK_AVAILABLE 
+    ? useUser() 
+    : { isSignedIn: false };
 
   return (
     <nav className={styles.navbar}>
@@ -15,7 +25,8 @@ export default function Navbar() {
       </div>
 
       <div className={styles.right}>
-        {currentUser ? (
+        {/* Show current user info (anonymous or signed in) */}
+        {currentUser && !isSignedIn && (
           <div className={styles.user}>
             <span
               className={styles.avatar}
@@ -23,10 +34,25 @@ export default function Navbar() {
             />
             <span className={styles.userName}>{currentUser.displayName}</span>
           </div>
-        ) : null}
-        <Link to="/login" className={styles.loginBtn}>
-          {currentUser?.isAnonymous !== false ? 'Sign In' : 'Account'}
-        </Link>
+        )}
+
+        {/* Clerk auth UI */}
+        {CLERK_AVAILABLE ? (
+          isSignedIn ? (
+            <UserButton 
+              afterSignOutUrl="/"
+              appearance={clerkAppearance}
+            />
+          ) : (
+            <SignInButton mode="modal" appearance={clerkAppearance}>
+              <button className={styles.loginBtn}>Sign In</button>
+            </SignInButton>
+          )
+        ) : (
+          <Link to="/login" className={styles.loginBtn}>
+            Sign In
+          </Link>
+        )}
       </div>
     </nav>
   );
