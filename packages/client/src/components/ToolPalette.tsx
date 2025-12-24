@@ -9,15 +9,23 @@ import {
   getCurrentFontSize,
   COLOR_PALETTE,
   FONT_SIZES,
+  canUndo,
 } from '../canvas/state';
 import styles from './ToolPalette.module.css';
 
 interface ToolPaletteProps {
   onToolChange?: (tool: ToolType) => void;
+  onUndo?: () => void;
 }
 
-// Tool definitions with icons (using simple SVG paths)
-const TOOLS: { type: ToolType; label: string; icon: JSX.Element }[] = [
+interface ToolDef {
+  type: ToolType;
+  label: string;
+  icon: JSX.Element;
+}
+
+// Primary tools - always visible
+const PRIMARY_TOOLS: ToolDef[] = [
   {
     type: 'move',
     label: 'Move / Pan',
@@ -42,6 +50,32 @@ const TOOLS: { type: ToolType; label: string; icon: JSX.Element }[] = [
     ),
   },
   {
+    type: 'text',
+    label: 'Text',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M4 7V4h16v3" />
+        <path d="M12 4v16" />
+        <path d="M8 20h8" />
+      </svg>
+    ),
+  },
+  {
+    type: 'eraser',
+    label: 'Eraser',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M20 20H7L3 16c-.6-.6-.6-1.5 0-2.1l10-10c.6-.6 1.5-.6 2.1 0l6.9 6.9c.6.6.6 1.5 0 2.1L14 21" />
+        <path d="M18 13l-8-8" />
+        <path d="M7 20h13" />
+      </svg>
+    ),
+  },
+];
+
+// Secondary tools - shown when expanded
+const SECONDARY_TOOLS: ToolDef[] = [
+  {
     type: 'marker',
     label: 'Marker',
     icon: (
@@ -60,17 +94,6 @@ const TOOLS: { type: ToolType; label: string; icon: JSX.Element }[] = [
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08" />
         <path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z" />
-      </svg>
-    ),
-  },
-  {
-    type: 'text',
-    label: 'Text',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M4 7V4h16v3" />
-        <path d="M12 4v16" />
-        <path d="M8 20h8" />
       </svg>
     ),
   },
@@ -101,23 +124,13 @@ const TOOLS: { type: ToolType; label: string; icon: JSX.Element }[] = [
       </svg>
     ),
   },
-  {
-    type: 'eraser',
-    label: 'Eraser',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M20 20H7L3 16c-.6-.6-.6-1.5 0-2.1l10-10c.6-.6 1.5-.6 2.1 0l6.9 6.9c.6.6.6 1.5 0 2.1L14 21" />
-        <path d="M18 13l-8-8" />
-        <path d="M7 20h13" />
-      </svg>
-    ),
-  },
 ];
 
-export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
+export default function ToolPalette({ onToolChange, onUndo }: ToolPaletteProps) {
   const [activeTool, setActiveTool] = useState<ToolType>(getCurrentTool());
   const [activeColor, setActiveColor] = useState<string>(getCurrentColor());
   const [activeFontSize, setActiveFontSize] = useState<number>(getCurrentFontSize());
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // Notify parent of initial tool on mount (important for mobile default)
   useEffect(() => {
@@ -144,24 +157,70 @@ export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
   const supportsColor = activeTool !== 'eraser' && activeTool !== 'move';
   // Check if text tool is selected
   const isTextTool = activeTool === 'text';
+  // Check if a secondary tool is active (should auto-expand)
+  const isSecondaryActive = SECONDARY_TOOLS.some(t => t.type === activeTool);
+
+  // Auto-expand if secondary tool is selected
+  useEffect(() => {
+    if (isSecondaryActive) {
+      setIsExpanded(true);
+    }
+  }, [isSecondaryActive]);
+
+  const renderToolButton = ({ type, label, icon }: ToolDef) => (
+    <button
+      key={type}
+      className={`${styles.toolButton} ${activeTool === type ? styles.active : ''}`}
+      onClick={() => handleToolClick(type)}
+      title={label}
+    >
+      {icon}
+    </button>
+  );
 
   return (
     <div className={styles.palette}>
-      {/* Tools section */}
+      {/* Undo button */}
+      <button
+        className={styles.undoButton}
+        onClick={onUndo}
+        title="Undo (Ctrl+Z)"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M3 7v6h6" />
+          <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+        </svg>
+      </button>
+
+      <div className={styles.divider} />
+
+      {/* Primary tools - always visible */}
       <div className={styles.tools}>
-        {TOOLS.map(({ type, label, icon }) => (
-          <button
-            key={type}
-            className={`${styles.toolButton} ${activeTool === type ? styles.active : ''}`}
-            onClick={() => handleToolClick(type)}
-            title={label}
-          >
-            {icon}
-          </button>
-        ))}
+        {PRIMARY_TOOLS.map(renderToolButton)}
       </div>
 
-      {/* Divider */}
+      {/* Expand/collapse button */}
+      <button
+        className={`${styles.expandButton} ${isExpanded ? styles.expanded : ''}`}
+        onClick={() => setIsExpanded(!isExpanded)}
+        title={isExpanded ? 'Show fewer tools' : 'Show more tools'}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          {isExpanded ? (
+            <path d="M18 15l-6-6-6 6" />
+          ) : (
+            <path d="M6 9l6 6 6-6" />
+          )}
+        </svg>
+      </button>
+
+      {/* Secondary tools - shown when expanded */}
+      {isExpanded && (
+        <div className={styles.tools}>
+          {SECONDARY_TOOLS.map(renderToolButton)}
+        </div>
+      )}
+
       <div className={styles.divider} />
 
       {/* Font size section (only for text tool) */}
@@ -206,4 +265,3 @@ export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
     </div>
   );
 }
-

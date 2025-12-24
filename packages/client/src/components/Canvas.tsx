@@ -34,6 +34,9 @@ import {
   currentColor,
   currentWidth,
   currentOpacity,
+  pushToUndoStack,
+  popFromUndoStack,
+  canUndo,
 } from '../canvas/state';
 import ToolPalette from './ToolPalette';
 import styles from './Canvas.module.css';
@@ -126,9 +129,24 @@ export default function Canvas({ boardId }: CanvasProps) {
     return () => window.removeEventListener('resize', resizeCanvases);
   }, [resizeCanvases]);
 
-  // Handle keyboard for space (pan mode)
+  // Handle undo (Cmd+Z / Ctrl+Z)
+  const handleUndo = useCallback(() => {
+    const strokeId = popFromUndoStack();
+    if (strokeId) {
+      wsClient.sendDrawEvent('delete', { strokeIds: [strokeId] });
+    }
+  }, []);
+
+  // Handle keyboard for space (pan mode) and undo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Undo: Cmd+Z (Mac) or Ctrl+Z (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
       if (e.code === 'Space' && !e.repeat) {
         spacePressed.current = true;
         if (containerRef.current) {
@@ -155,7 +173,7 @@ export default function Canvas({ boardId }: CanvasProps) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [activeTool]);
+  }, [activeTool, handleUndo]);
 
   // Initialize canvases and subscribe to messages
   useEffect(() => {
@@ -291,6 +309,8 @@ export default function Canvas({ boardId }: CanvasProps) {
           color: getCurrentColor(),
           fontSize: getCurrentFontSize(),
         });
+        // Track for undo
+        pushToUndoStack(textInput.strokeId);
       }
       
       // Mark as just opened to prevent immediate blur from closing it
@@ -397,6 +417,8 @@ export default function Canvas({ boardId }: CanvasProps) {
             width: shape.width,
             opacity: shape.opacity,
           });
+          // Track for undo
+          pushToUndoStack(shape.strokeId);
         }
       }
 
@@ -418,6 +440,8 @@ export default function Canvas({ boardId }: CanvasProps) {
         opacity: stroke.opacity,
         points: stroke.points,
       });
+      // Track for undo
+      pushToUndoStack(stroke.strokeId);
     }
 
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
@@ -479,6 +503,8 @@ export default function Canvas({ boardId }: CanvasProps) {
             width: shape.width,
             opacity: shape.opacity,
           });
+          // Track for undo
+          pushToUndoStack(shape.strokeId);
         }
       }
     }
@@ -496,6 +522,8 @@ export default function Canvas({ boardId }: CanvasProps) {
           opacity: stroke.opacity,
           points: stroke.points,
         });
+        // Track for undo
+        pushToUndoStack(stroke.strokeId);
       }
     }
   };
@@ -516,6 +544,8 @@ export default function Canvas({ boardId }: CanvasProps) {
         color: getCurrentColor(),
         fontSize: getCurrentFontSize(),
       });
+      // Track for undo
+      pushToUndoStack(textInput.strokeId);
     }
     setTextInput(prev => ({ ...prev, visible: false, text: '' }));
   }, [textInput]);
@@ -568,7 +598,7 @@ export default function Canvas({ boardId }: CanvasProps) {
       />
 
       {/* Tool palette */}
-      <ToolPalette onToolChange={handleToolChange} />
+      <ToolPalette onToolChange={handleToolChange} onUndo={handleUndo} />
 
       {/* Text input overlay */}
       {textInput.visible && (

@@ -115,6 +115,56 @@ export interface StrokeBounds {
 }
 export const strokeBoundsMap = new Map<string, StrokeBounds>();
 
+// Undo stack - tracks strokeIds of user's own actions (for personal undo)
+const undoStack: string[] = [];
+const MAX_UNDO_STACK = 50;  // Limit memory usage
+
+/**
+ * Push a strokeId onto the undo stack
+ */
+export function pushToUndoStack(strokeId: string): void {
+  undoStack.push(strokeId);
+  // Trim stack if it gets too large
+  if (undoStack.length > MAX_UNDO_STACK) {
+    undoStack.shift();
+  }
+}
+
+/**
+ * Pop the last strokeId from the undo stack
+ * Returns null if stack is empty or if the stroke was already deleted
+ */
+export function popFromUndoStack(): string | null {
+  while (undoStack.length > 0) {
+    const strokeId = undoStack.pop()!;
+    // Skip if already deleted
+    if (!deletedStrokeIds.has(strokeId)) {
+      return strokeId;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if undo is available
+ */
+export function canUndo(): boolean {
+  // Check if there's any non-deleted stroke in the stack
+  for (let i = undoStack.length - 1; i >= 0; i--) {
+    if (!deletedStrokeIds.has(undoStack[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Clear the undo stack (on board change)
+ */
+export function clearUndoStack(): void {
+  undoStack.length = 0;
+}
+
 // Current stroke being drawn (optimistic)
 export interface PendingStroke {
   strokeId: string;       // Unique ID for this stroke
@@ -288,6 +338,7 @@ export function clearState(): void {
   cursors.clear();
   deletedStrokeIds.clear();
   strokeBoundsMap.clear();
+  clearUndoStack();
   resetViewport();
   clearAllCanvases();
 }
