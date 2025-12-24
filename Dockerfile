@@ -24,7 +24,11 @@ COPY packages/server ./packages/server
 # Build shared types
 RUN pnpm --filter @witeboard/shared build
 
-# Build client (Vite)
+# Accept Clerk key as build arg (Railway passes env vars as build args)
+ARG VITE_CLERK_PUBLISHABLE_KEY
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
+
+# Build client (Vite) - VITE_ env vars are embedded at build time
 RUN pnpm --filter @witeboard/client build
 
 # Build server (TypeScript)
