@@ -131,6 +131,7 @@ export default function ToolPalette({ onToolChange, onUndo }: ToolPaletteProps) 
   const [activeColor, setActiveColor] = useState<string>(getCurrentColor());
   const [activeFontSize, setActiveFontSize] = useState<number>(getCurrentFontSize());
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isColorsExpanded, setIsColorsExpanded] = useState(false);
 
   // Notify parent of initial tool on mount (important for mobile default)
   useEffect(() => {
@@ -159,6 +160,8 @@ export default function ToolPalette({ onToolChange, onUndo }: ToolPaletteProps) 
   const isTextTool = activeTool === 'text';
   // Check if a secondary tool is active (should auto-expand)
   const isSecondaryActive = SECONDARY_TOOLS.some(t => t.type === activeTool);
+  // Check if current color needs dark icon (light colors)
+  const needsDarkIcon = ['#ffffff', '#ffd43b', '#69db7c'].includes(activeColor);
 
   // Auto-expand if secondary tool is selected
   useEffect(() => {
@@ -243,24 +246,51 @@ export default function ToolPalette({ onToolChange, onUndo }: ToolPaletteProps) 
       )}
 
       {/* Colors section */}
-      <div className={styles.colors}>
-        {COLOR_PALETTE.map((color) => (
-          <button
-            key={color}
-            className={`${styles.colorButton} ${activeColor === color ? styles.active : ''} ${!supportsColor ? styles.disabled : ''}`}
-            onClick={() => supportsColor && handleColorClick(color)}
-            title={color}
-            disabled={!supportsColor}
-            style={{ 
-              backgroundColor: color,
-              borderColor: color === '#1a1a1a' ? '#333' : color 
-            }}
-          >
-            {activeColor === color && supportsColor && (
-              <span className={styles.colorCheck}>✓</span>
-            )}
-          </button>
-        ))}
+      <div className={styles.colorSection}>
+        {/* Current color indicator (always visible) */}
+        <button
+          className={`${styles.currentColor} ${!supportsColor ? styles.disabled : ''}`}
+          onClick={() => supportsColor && setIsColorsExpanded(!isColorsExpanded)}
+          title={supportsColor ? (isColorsExpanded ? 'Hide colors' : 'Choose color') : 'Color not available'}
+          disabled={!supportsColor}
+          style={{ 
+            backgroundColor: activeColor,
+            borderColor: activeColor === '#1a1a1a' ? '#333' : activeColor 
+          }}
+        >
+          {supportsColor && (
+            <svg 
+              className={`${styles.colorExpandIcon} ${isColorsExpanded ? styles.expanded : ''} ${needsDarkIcon ? styles.darkIcon : ''}`}
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor" 
+              strokeWidth="2"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          )}
+        </button>
+
+        {/* Expanded color palette */}
+        {isColorsExpanded && supportsColor && (
+          <div className={styles.colors}>
+            {COLOR_PALETTE.filter(c => c !== activeColor).map((color) => (
+              <button
+                key={color}
+                className={styles.colorButton}
+                onClick={() => {
+                  handleColorClick(color);
+                  setIsColorsExpanded(false);
+                }}
+                title={color}
+                style={{ 
+                  backgroundColor: color,
+                  borderColor: color === '#1a1a1a' ? '#333' : color 
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
