@@ -1,9 +1,7 @@
-import type { Appearance } from '@clerk/types';
-
 /**
  * Custom Clerk theme to match Witeboard's dark aesthetic
  */
-export const clerkAppearance: Appearance = {
+export const clerkAppearance = {
   variables: {
     colorPrimary: '#3b82f6',
     colorBackground: '#141414',
