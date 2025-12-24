@@ -97,15 +97,28 @@ Or deploy manually:
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `PORT` | No | `3001` | Server port |
-| `NODE_ENV` | No | `development` | Environment mode |
-| `CLERK_SECRET_KEY` | No | — | Clerk secret key for private boards |
-| `VITE_CLERK_PUBLISHABLE_KEY` | No | — | Clerk publishable key for frontend auth |
+| Variable | Type | Required | Description |
+|----------|------|----------|-------------|
+| `DATABASE_URL` | Runtime | Yes | PostgreSQL connection string (auto-injected by Railway) |
+| `PORT` | Runtime | No | Server port (auto-set by Railway) |
+| `CLERK_SECRET_KEY` | Runtime | For private boards | Server-side token verification |
+| `VITE_CLERK_PUBLISHABLE_KEY` | Build-time | For auth UI | Frontend Clerk components |
 
-**Note:** For Clerk authentication, add `VITE_CLERK_PUBLISHABLE_KEY` as a **build argument** in Railway (it's embedded at build time, not runtime). Set `CLERK_SECRET_KEY` as a regular environment variable.
+### Setting Up Clerk on Railway
+
+Clerk requires **two** variables with different configurations:
+
+1. **`VITE_CLERK_PUBLISHABLE_KEY`** (Build Argument)
+   - This is embedded into the frontend bundle at build time
+   - Railway auto-passes it via `railway.json` buildArgs
+   - Just add it as a regular variable in Railway dashboard
+
+2. **`CLERK_SECRET_KEY`** (Runtime Variable)
+   - This is read by the server at runtime
+   - Add it as a regular variable in Railway dashboard
+   - **If missing:** `/api/boards` returns 401 Unauthorized
+
+Get both keys from [Clerk Dashboard](https://dashboard.clerk.com) → API Keys.
 
 ### Before You Push (Deployment Checklist)
 

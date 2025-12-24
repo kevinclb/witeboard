@@ -112,10 +112,7 @@ class WebSocketClient {
    */
   send(message: ClientMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      console.log('WS sending:', message.type);
       this.ws.send(JSON.stringify(message));
-    } else {
-      console.error('WS not open, cannot send:', message.type, 'readyState:', this.ws?.readyState);
     }
   }
 
@@ -173,7 +170,7 @@ class WebSocketClient {
   }
 
   /**
-   * Create a new board
+   * Create a new board (via WebSocket - only works when connected)
    */
   createBoard(name: string | undefined, isPrivate: boolean): void {
     if (!this.authToken) {
@@ -182,11 +179,10 @@ class WebSocketClient {
     }
 
     if (this.ws?.readyState !== WebSocket.OPEN) {
-      console.error('Cannot create board: WebSocket not connected', this.ws?.readyState);
+      console.error('Cannot create board: WebSocket not connected');
       return;
     }
 
-    console.log('Creating board:', { name, isPrivate });
     this.send({
       type: 'CREATE_BOARD',
       payload: {

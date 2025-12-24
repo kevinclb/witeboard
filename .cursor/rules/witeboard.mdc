@@ -230,6 +230,19 @@ git push origin main
 - **New files** are untracked by default (`??` in git status)
 - **Local dev** uses esbuild which skips type checking; **prod build** uses tsc which is strict
 
+### Railway Environment Variables
+
+| Variable | Type | Purpose |
+|----------|------|---------|
+| `DATABASE_URL` | Runtime (auto) | Postgres connection |
+| `PORT` | Runtime (auto) | Server port |
+| `CLERK_SECRET_KEY` | Runtime (manual) | Server token verification |
+| `VITE_CLERK_PUBLISHABLE_KEY` | Build-time (manual) | Frontend auth UI |
+
+**Common production issue:** `/api/boards` returns 401
+- **Cause:** `CLERK_SECRET_KEY` not set in Railway variables
+- **Fix:** Add it in Railway Dashboard → Variables
+
 ### Monorepo Build Order (Dockerfile)
 1. `@witeboard/shared` → generates `dist/` with `.js` and `.d.ts`
 2. `@witeboard/client` → runs `tsc` then Vite

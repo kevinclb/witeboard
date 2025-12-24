@@ -915,6 +915,14 @@ export function replayAll(events: DrawEvent[]): void {
 
 /**
  * Apply a single draw event (for incoming server events)
+ * 
+ * Key insight: The live canvas sits on TOP of the history canvas.
+ * Local strokes are drawn to the live canvas for smooth drawing, but this means
+ * they visually cover shapes/text on the history canvas.
+ * 
+ * Solution: When we receive a shape or text event, we redraw everything to
+ * ensure proper z-ordering. Strokes are drawn incrementally to history for
+ * performance (they're already ordered correctly within the drawLog).
  */
 export function applyDrawEvent(event: DrawEvent): void {
   drawLog.push(event);
@@ -929,8 +937,8 @@ export function applyDrawEvent(event: DrawEvent): void {
       event.payload.opacity ?? 1
     );
     
-    // Draw on live canvas
-    drawStrokeToLive(
+    // Draw stroke incrementally to history (fast path)
+    drawStrokeToHistory(
       event.payload.points,
       event.payload.color,
       event.payload.width,
@@ -948,15 +956,10 @@ export function applyDrawEvent(event: DrawEvent): void {
       event.payload.opacity ?? 1
     );
     
-    // Draw on live canvas
-    drawShapeToLive(
-      event.payload.shapeType,
-      event.payload.start,
-      event.payload.end,
-      event.payload.color,
-      event.payload.width,
-      event.payload.opacity ?? 1
-    );
+    // Clear live canvas (which may have local strokes covering this shape)
+    // and redraw everything to ensure proper z-ordering
+    clearLiveCanvas();
+    redrawAll();
   } else if (event.type === 'text' && isTextPayload(event.payload)) {
     // Register bounds for hit-testing
     registerTextBounds(
@@ -967,18 +970,15 @@ export function applyDrawEvent(event: DrawEvent): void {
       event.payload.fontSize
     );
     
-    // Draw on live canvas
-    drawTextToLive(
-      event.payload.text,
-      event.payload.position,
-      event.payload.color,
-      event.payload.fontSize
-    );
+    // Clear live canvas and redraw for proper z-ordering
+    clearLiveCanvas();
+    redrawAll();
   } else if (event.type === 'delete' && isDeletePayload(event.payload)) {
     // Add to deleted set and redraw
     for (const id of event.payload.strokeIds) {
       deletedStrokeIds.add(id);
     }
+    clearLiveCanvas();
     redrawAll();
   } else if (event.type === 'clear') {
     deletedStrokeIds.clear();
