@@ -197,6 +197,43 @@ CREATE TABLE drawing_events (
 2. **Phase 2**: Multiple WS servers, sticky sessions, Redis Pub/Sub
 3. **Phase 3**: Partition by boardId, snapshot compaction, event chunking
 
+## Implementation Checklist (CRITICAL)
+
+Before completing ANY feature implementation:
+
+### 1. Local TypeScript Check
+```bash
+pnpm build   # MUST pass without errors
+```
+This runs `tsc` and catches type errors that Railway will hit. **Never push without running this.**
+
+### 2. Git Status Check
+After creating new files, verify they're tracked:
+```bash
+git status
+```
+New files show as `??` (untracked). **Add and commit them** before pushing:
+```bash
+git add <new-files>
+git commit -m "feat: description"
+```
+
+### 3. Common Railway Build Failures
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Cannot find module './path/File'` | New file not committed | `git add` the file |
+| `TS2345: Argument type mismatch` | Stricter TS in prod build | Fix types, run `pnpm build` locally |
+| `ERR_MODULE_NOT_FOUND: ...shared/dist/...` | Shared package not built | Ensure `pnpm build` runs shared first |
+| `verifyToken is not a function` | Wrong Clerk API usage | Check `@clerk/backend` docs for correct API |
+
+### 4. Monorepo Build Order
+The Dockerfile builds in this order:
+1. `@witeboard/shared` → generates `dist/` with `.js` and `.d.ts`
+2. `@witeboard/client` → runs `tsc` then Vite
+3. `@witeboard/server` → runs `tsc`
+
+If shared types change, the client/server MUST rebuild.
+
 ## Deployment
 
 ### Railway (Production)
