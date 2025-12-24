@@ -8,6 +8,30 @@ CREATE TABLE IF NOT EXISTS boards (
   name TEXT
 );
 
+-- Add ownership columns (idempotent for existing deployments)
+DO $$ 
+BEGIN
+  -- Add owner_id column if it doesn't exist
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'boards' AND column_name = 'owner_id'
+  ) THEN
+    ALTER TABLE boards ADD COLUMN owner_id TEXT;
+  END IF;
+  
+  -- Add is_private column if it doesn't exist
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'boards' AND column_name = 'is_private'
+  ) THEN
+    ALTER TABLE boards ADD COLUMN is_private BOOLEAN DEFAULT false;
+  END IF;
+END $$;
+
+-- Index for listing user's boards (only private boards have owners)
+CREATE INDEX IF NOT EXISTS idx_boards_owner 
+ON boards(owner_id) WHERE owner_id IS NOT NULL;
+
 -- Drawing events table (append-only log)
 CREATE TABLE IF NOT EXISTS drawing_events (
   board_id TEXT NOT NULL REFERENCES boards(id),
@@ -20,9 +44,9 @@ CREATE TABLE IF NOT EXISTS drawing_events (
 CREATE INDEX IF NOT EXISTS idx_drawing_events_board_seq 
 ON drawing_events (board_id, seq);
 
--- Ensure global board exists
-INSERT INTO boards (id, name) 
-VALUES ('global', 'Global Whiteboard') 
+-- Ensure global board exists (public, no owner)
+INSERT INTO boards (id, name, is_private) 
+VALUES ('global', 'Global Whiteboard', false) 
 ON CONFLICT (id) DO NOTHING;
 `;
 

@@ -18,14 +18,22 @@ class WebSocketClient {
   private handlers: Set<MessageHandler> = new Set();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private boardId: string | null = null;
-  private identity: { clientId: string; displayName: string } | null = null;
+  private identity: { clientId: string; displayName: string; isAnonymous: boolean } | null = null;
+  private authToken: string | null = null;
+
+  /**
+   * Set the auth token for authenticated requests
+   */
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+  }
 
   /**
    * Connect to the WebSocket server and join a board
    */
   connect(
     boardId: string,
-    identity: { clientId: string; displayName: string }
+    identity: { clientId: string; displayName: string; isAnonymous: boolean }
   ): void {
     this.boardId = boardId;
     this.identity = identity;
@@ -104,7 +112,10 @@ class WebSocketClient {
    */
   send(message: ClientMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      console.log('WS sending:', message.type);
       this.ws.send(JSON.stringify(message));
+    } else {
+      console.error('WS not open, cannot send:', message.type, 'readyState:', this.ws?.readyState);
     }
   }
 
@@ -118,9 +129,10 @@ class WebSocketClient {
       type: 'HELLO',
       payload: {
         boardId: this.boardId,
+        authToken: this.authToken ?? undefined,
         clientId: this.identity.clientId,
         displayName: this.identity.displayName,
-        isAnonymous: true,
+        isAnonymous: this.identity.isAnonymous,
       },
     });
   }
@@ -159,6 +171,31 @@ class WebSocketClient {
       payload: { x, y },
     });
   }
+
+  /**
+   * Create a new board
+   */
+  createBoard(name: string | undefined, isPrivate: boolean): void {
+    if (!this.authToken) {
+      console.error('Cannot create board: not authenticated');
+      return;
+    }
+
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      console.error('Cannot create board: WebSocket not connected', this.ws?.readyState);
+      return;
+    }
+
+    console.log('Creating board:', { name, isPrivate });
+    this.send({
+      type: 'CREATE_BOARD',
+      payload: {
+        name,
+        isPrivate,
+        clerkToken: this.authToken,
+      },
+    });
+  }
 }
 
 // Singleton instance
@@ -178,4 +215,6 @@ export type OnCursorMove = (data: {
   x: number;
   y: number;
 }) => void;
+export type OnAccessDenied = (data: { boardId: string; reason: string }) => void;
+export type OnBoardCreated = (data: { boardId: string; name?: string; isPrivate: boolean }) => void;
 

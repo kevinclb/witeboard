@@ -102,6 +102,10 @@ Or deploy manually:
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `PORT` | No | `3001` | Server port |
 | `NODE_ENV` | No | `development` | Environment mode |
+| `CLERK_SECRET_KEY` | No | — | Clerk secret key for private boards |
+| `VITE_CLERK_PUBLISHABLE_KEY` | No | — | Clerk publishable key for frontend auth |
+
+**Note:** For Clerk authentication, add `VITE_CLERK_PUBLISHABLE_KEY` as a **build argument** in Railway (it's embedded at build time, not runtime). Set `CLERK_SECRET_KEY` as a regular environment variable.
 
 ### Manual Deployment
 
@@ -119,9 +123,19 @@ NODE_ENV=production node dist/index.js
 | Action | Control |
 |--------|---------|
 | Draw | Left-click + drag |
-| Pan | Space + drag, or middle-click + drag |
+| Pan | Space + drag, middle-click + drag, or use Move tool |
 | Zoom | Scroll wheel |
 | Reset view | Click zoom percentage |
+| Undo | Ctrl/Cmd + Z |
+| Create board | Click "New Board" (requires sign-in) |
+
+## Features
+
+- **Global Whiteboard** — Anyone can draw on the shared canvas at `/`
+- **Private Boards** — Signed-in users can create private whiteboards
+- **Tool Palette** — Pencil, marker, brush, shapes, text, eraser
+- **Multi-user Cursors** — See other users' cursors in real-time
+- **Personal Undo** — Undo your own strokes (doesn't affect others)
 
 ## API / WebSocket Protocol
 

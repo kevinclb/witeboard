@@ -2,9 +2,10 @@ import { generateUUID, generateAnonymousName } from '@witeboard/shared';
 
 const STORAGE_KEY = 'witeboard_identity';
 
-interface StoredIdentity {
+export interface StoredIdentity {
   clientId: string;
   displayName: string;
+  isAnonymous: boolean;
 }
 
 /**
@@ -16,17 +17,44 @@ export function getOrCreateIdentity(): StoredIdentity {
     if (stored) {
       const parsed = JSON.parse(stored) as StoredIdentity;
       if (parsed.clientId && parsed.displayName) {
-        return parsed;
+        // Ensure isAnonymous is set
+        return {
+          ...parsed,
+          isAnonymous: parsed.isAnonymous ?? true,
+        };
       }
     }
   } catch {
     // Ignore parse errors
   }
 
-  // Create new identity
+  // Create new anonymous identity
   const identity: StoredIdentity = {
     clientId: generateUUID(),
     displayName: generateAnonymousName(),
+    isAnonymous: true,
+  };
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+  } catch {
+    // Ignore storage errors
+  }
+
+  return identity;
+}
+
+/**
+ * Update identity with Clerk user info
+ */
+export function updateIdentityWithClerkUser(
+  clerkUserId: string, 
+  displayName: string
+): StoredIdentity {
+  const identity: StoredIdentity = {
+    clientId: clerkUserId,
+    displayName,
+    isAnonymous: false,
   };
 
   try {

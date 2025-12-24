@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { DrawEvent } from '@witeboard/shared';
+import type { DrawEvent, Board } from '@witeboard/shared';
 
 const { Pool } = pg;
 
@@ -8,11 +8,115 @@ const pool = new Pool({
 });
 
 /**
- * Ensure a board exists, creating it if necessary
+ * Board row from database
+ */
+interface BoardRow {
+  id: string;
+  created_at: Date;
+  name: string | null;
+  owner_id: string | null;
+  is_private: boolean | null;
+}
+
+/**
+ * Convert database row to Board type
+ */
+function rowToBoard(row: BoardRow): Board {
+  return {
+    id: row.id,
+    createdAt: row.created_at.getTime(),
+    name: row.name ?? undefined,
+    ownerId: row.owner_id ?? undefined,
+    isPrivate: row.is_private ?? false,
+  };
+}
+
+/**
+ * Get a board by ID
+ */
+export async function getBoard(boardId: string): Promise<Board | null> {
+  const result = await pool.query<BoardRow>(
+    `SELECT id, created_at, name, owner_id, is_private FROM boards WHERE id = $1`,
+    [boardId]
+  );
+  return result.rows[0] ? rowToBoard(result.rows[0]) : null;
+}
+
+/**
+ * Create a new board
+ */
+export async function createBoard(
+  boardId: string, 
+  name: string | undefined, 
+  ownerId: string | undefined, 
+  isPrivate: boolean
+): Promise<Board> {
+  const result = await pool.query<BoardRow>(
+    `INSERT INTO boards (id, name, owner_id, is_private) 
+     VALUES ($1, $2, $3, $4) 
+     RETURNING id, created_at, name, owner_id, is_private`,
+    [boardId, name ?? null, ownerId ?? null, isPrivate]
+  );
+  return rowToBoard(result.rows[0]);
+}
+
+/**
+ * Get all boards owned by a user
+ */
+export async function getUserBoards(ownerId: string): Promise<Board[]> {
+  const result = await pool.query<BoardRow>(
+    `SELECT id, created_at, name, owner_id, is_private 
+     FROM boards 
+     WHERE owner_id = $1 
+     ORDER BY created_at DESC`,
+    [ownerId]
+  );
+  return result.rows.map(rowToBoard);
+}
+
+/**
+ * Delete a board (owner only)
+ */
+export async function deleteBoard(boardId: string, ownerId: string): Promise<boolean> {
+  // First delete all events for the board
+  await pool.query(
+    `DELETE FROM drawing_events WHERE board_id = $1`,
+    [boardId]
+  );
+  
+  // Then delete the board itself (only if owner matches)
+  const result = await pool.query(
+    `DELETE FROM boards WHERE id = $1 AND owner_id = $2`,
+    [boardId, ownerId]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Check if a user can access a board
+ * Returns true for public boards or if user is the owner
+ */
+export async function canAccessBoard(boardId: string, userId: string | null): Promise<boolean> {
+  const board = await getBoard(boardId);
+  
+  if (!board) {
+    return false; // Board doesn't exist
+  }
+  
+  if (!board.isPrivate) {
+    return true; // Public board
+  }
+  
+  // Private board - only owner can access
+  return userId !== null && board.ownerId === userId;
+}
+
+/**
+ * Ensure a board exists, creating it if necessary (for legacy/global board)
  */
 export async function ensureBoardExists(boardId: string, name?: string): Promise<void> {
   await pool.query(
-    `INSERT INTO boards (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+    `INSERT INTO boards (id, name, is_private) VALUES ($1, $2, false) ON CONFLICT (id) DO NOTHING`,
     [boardId, name || null]
   );
 }

@@ -115,6 +115,8 @@ export interface Board {
   id: string;
   createdAt: number;
   name?: string;
+  ownerId?: string;      // Clerk user ID (null for public boards)
+  isPrivate: boolean;    // Private boards require owner access
 }
 
 // ============================================================================
@@ -158,12 +160,22 @@ export interface PingMessage {
   type: 'PING';
 }
 
+export interface CreateBoardMessage {
+  type: 'CREATE_BOARD';
+  payload: {
+    name?: string;
+    isPrivate: boolean;
+    clerkToken: string;  // Required - must be signed in to create boards
+  };
+}
+
 export type ClientMessage =
   | HelloMessage
   | DrawEventMessage
   | CursorMoveMessage
   | LeaveBoardMessage
-  | PingMessage;
+  | PingMessage
+  | CreateBoardMessage;
 
 // --- Server -> Client Messages ---
 
@@ -237,6 +249,23 @@ export interface PongMessage {
   type: 'PONG';
 }
 
+export interface BoardCreatedMessage {
+  type: 'BOARD_CREATED';
+  payload: {
+    boardId: string;
+    name?: string;
+    isPrivate: boolean;
+  };
+}
+
+export interface AccessDeniedMessage {
+  type: 'ACCESS_DENIED';
+  payload: {
+    boardId: string;
+    reason: string;
+  };
+}
+
 export type ServerMessage =
   | SyncSnapshotMessage
   | ServerDrawEventMessage
@@ -246,5 +275,7 @@ export type ServerMessage =
   | UserLeaveMessage
   | WelcomeMessage
   | ErrorMessage
-  | PongMessage;
+  | PongMessage
+  | BoardCreatedMessage
+  | AccessDeniedMessage;
 

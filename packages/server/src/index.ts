@@ -1,15 +1,25 @@
-import 'dotenv/config';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
-import { handleMessage, handleDisconnect } from './handlers.js';
-import { ensureBoardExists } from './db/client.js';
-import { initBoardSequence } from './sequencer.js';
-import { runMigrations } from './db/migrate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load environment variables BEFORE importing modules that need them
+// Support both .env and .env.local
+import dotenv from 'dotenv';
+const serverRoot = path.resolve(__dirname, '..');
+dotenv.config({ path: path.join(serverRoot, '.env') });
+dotenv.config({ path: path.join(serverRoot, '.env.local'), override: true });
+
+// Now import modules that depend on environment variables
+const { handleMessage, handleDisconnect } = await import('./handlers.js');
+const { ensureBoardExists, getUserBoards, deleteBoard, createBoard } = await import('./db/client.js');
+const { initBoardSequence } = await import('./sequencer.js');
+const { runMigrations } = await import('./db/migrate.js');
+const { verifyClerkToken } = await import('./auth.js');
+const { generateUUID } = await import('@witeboard/shared');
 const PORT = parseInt(process.env.PORT || process.env.WS_PORT || '3001', 10);
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -71,6 +81,127 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): boole
   return false;
 }
 
+/**
+ * Handle REST API requests
+ */
+async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
+  const url = req.url || '';
+  const method = req.method || 'GET';
+  
+  // Only handle /api/* routes
+  if (!url.startsWith('/api/')) {
+    return false;
+  }
+
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  // Handle preflight
+  if (method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return true;
+  }
+
+  // Get auth token from header
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  // Verify token
+  const userId = await verifyClerkToken(token ?? undefined);
+
+  // GET /api/boards - List user's boards
+  if (url === '/api/boards' && method === 'GET') {
+    if (!userId) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return true;
+    }
+
+    try {
+      const boards = await getUserBoards(userId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ boards }));
+    } catch (error) {
+      console.error('Error fetching boards:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+    return true;
+  }
+
+  // POST /api/boards - Create a new board
+  if (url === '/api/boards' && method === 'POST') {
+    if (!userId) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return true;
+    }
+
+    try {
+      // Read request body
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(chunk as Buffer);
+      }
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const { name, isPrivate } = body;
+
+      // Generate board ID and create the board
+      const boardId = generateUUID();
+      const board = await createBoard(boardId, name, userId, isPrivate ?? true);
+
+      // Initialize sequence counter
+      await initBoardSequence(boardId);
+
+      console.log(`Board created via API: id=${boardId}, owner=${userId}, private=${isPrivate}`);
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ board }));
+    } catch (error) {
+      console.error('Error creating board:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+    return true;
+  }
+
+  // DELETE /api/boards/:id - Delete a board
+  const deleteMatch = url.match(/^\/api\/boards\/([a-zA-Z0-9-]+)$/);
+  if (deleteMatch && method === 'DELETE') {
+    if (!userId) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return true;
+    }
+
+    const boardId = deleteMatch[1];
+
+    try {
+      const deleted = await deleteBoard(boardId, userId);
+      if (deleted) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Board not found or not authorized' }));
+      }
+    } catch (error) {
+      console.error('Error deleting board:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+    return true;
+  }
+
+  // 404 for unknown API routes
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+  return true;
+}
+
 async function main() {
   console.log(`Starting Witeboard server (${isProduction ? 'production' : 'development'})...`);
 
@@ -93,7 +224,10 @@ async function main() {
   }
 
   // Create HTTP server
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
+    // Handle API routes first
+    if (await handleApi(req, res)) return;
+
     // Handle static files in production
     if (serveStatic(req, res)) return;
 

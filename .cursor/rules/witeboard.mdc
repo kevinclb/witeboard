@@ -30,8 +30,9 @@ Rules:
 - Future: Redis Pub/Sub for horizontal scaling
 
 ### Auth
-- MVP: Anonymous identity by default
-- Future: Supabase Auth / Clerk
+- Anonymous identity by default (works without auth configured)
+- Clerk for user authentication (optional)
+- Private boards require signed-in users
 
 ## Architecture Rules
 
@@ -115,9 +116,10 @@ interface PresenceState {
 ## WebSocket Protocol
 
 ### Client → Server
-- `HELLO` — Join board with identity
-- `DRAW_EVENT` — Submit stroke
+- `HELLO` — Join board with identity (includes authToken for private boards)
+- `DRAW_EVENT` — Submit stroke/shape/text/delete
 - `CURSOR_MOVE` — Update cursor position (throttled 30-60ms)
+- `CREATE_BOARD` — Create a new board (requires auth)
 - `LEAVE_BOARD` — Optional explicit leave
 
 ### Server → Client
@@ -127,6 +129,8 @@ interface PresenceState {
 - `USER_LIST` — Full presence list
 - `USER_JOIN` — User joined board
 - `USER_LEAVE` — User left board
+- `BOARD_CREATED` — New board created successfully
+- `ACCESS_DENIED` — User denied access to private board
 - `ERROR` — Error response
 
 ## Database Schema (Postgres)
@@ -135,7 +139,9 @@ interface PresenceState {
 CREATE TABLE boards (
   id TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  name TEXT
+  name TEXT,
+  owner_id TEXT,                -- Clerk user ID (null for public boards)
+  is_private BOOLEAN DEFAULT false
 );
 
 CREATE TABLE drawing_events (

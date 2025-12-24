@@ -4,10 +4,10 @@ import type {
   HelloMessage,
   DrawEventMessage,
   CursorMoveMessage,
+  CreateBoardMessage,
   ServerMessage,
-  DrawEventType,
-  DrawEventPayload,
 } from '@witeboard/shared';
+import { generateUUID } from '@witeboard/shared';
 import {
   resolveIdentity,
   joinBoard,
@@ -19,7 +19,8 @@ import {
   getConnectionIdentity,
 } from './presence.js';
 import { sequenceEvent, initBoardSequence } from './sequencer.js';
-import { getEvents, ensureBoardExists } from './db/client.js';
+import { getEvents, ensureBoardExists, getBoard, createBoard, canAccessBoard } from './db/client.js';
+import { verifyClerkToken } from './auth.js';
 
 /**
  * Send a message to a single client
@@ -62,19 +63,60 @@ function broadcastAll(boardId: string, message: ServerMessage): void {
  * Handle HELLO message - join board and sync state
  */
 async function handleHello(ws: WebSocket, message: HelloMessage): Promise<void> {
-  const { boardId, clientId, displayName, isAnonymous } = message.payload;
+  const { boardId, authToken, clientId, displayName, isAnonymous } = message.payload;
 
   console.log(`HELLO from client: boardId=${boardId}, clientId=${clientId}`);
 
   try {
-    // Ensure board exists
-    await ensureBoardExists(boardId);
+    // Verify Clerk token if provided
+    const clerkUserId = await verifyClerkToken(authToken);
+    
+    // Check if board exists and get its details
+    let board = await getBoard(boardId);
+    
+    if (!board) {
+      // Board doesn't exist - create it as public if it's not a valid UUID
+      // (legacy behavior for global board and direct URL access)
+      await ensureBoardExists(boardId);
+      board = await getBoard(boardId);
+    }
+    
+    // Check access for private boards
+    if (board && board.isPrivate) {
+      if (!clerkUserId) {
+        // Not authenticated - deny access
+        send(ws, {
+          type: 'ACCESS_DENIED',
+          payload: { 
+            boardId, 
+            reason: 'This is a private board. Please sign in to access it.' 
+          },
+        });
+        return;
+      }
+      
+      if (board.ownerId !== clerkUserId) {
+        // Authenticated but not the owner
+        send(ws, {
+          type: 'ACCESS_DENIED',
+          payload: { 
+            boardId, 
+            reason: 'This board is private. Only the owner can access it.' 
+          },
+        });
+        return;
+      }
+    }
     
     // Initialize sequence counter
     await initBoardSequence(boardId);
 
-    // Resolve identity
-    const identity = resolveIdentity({ clientId, displayName, isAnonymous });
+    // Resolve identity (use Clerk user ID if available)
+    const identity = resolveIdentity({ 
+      clientId: clerkUserId || clientId, 
+      displayName, 
+      isAnonymous: !clerkUserId && isAnonymous 
+    });
 
     // Join the board
     const presence = joinBoard(ws, boardId, identity);
@@ -182,6 +224,58 @@ function handleCursorMove(ws: WebSocket, message: CursorMoveMessage): void {
 }
 
 /**
+ * Handle CREATE_BOARD message - create a new board
+ */
+async function handleCreateBoard(ws: WebSocket, message: CreateBoardMessage): Promise<void> {
+  const { name, isPrivate, clerkToken } = message.payload;
+
+  console.log(`CREATE_BOARD request: name=${name}, isPrivate=${isPrivate}, hasToken=${!!clerkToken}`);
+
+  try {
+    // Verify Clerk token - must be signed in to create boards
+    const clerkUserId = await verifyClerkToken(clerkToken);
+    
+    if (!clerkUserId) {
+      send(ws, {
+        type: 'ERROR',
+        payload: { 
+          code: 'UNAUTHORIZED', 
+          message: 'You must be signed in to create a board' 
+        },
+      });
+      return;
+    }
+
+    // Generate a unique board ID
+    const boardId = generateUUID();
+
+    // Create the board
+    await createBoard(boardId, name, clerkUserId, isPrivate);
+    
+    // Initialize sequence counter
+    await initBoardSequence(boardId);
+
+    console.log(`Board created: id=${boardId}, owner=${clerkUserId}, private=${isPrivate}`);
+
+    // Send success response
+    send(ws, {
+      type: 'BOARD_CREATED',
+      payload: {
+        boardId,
+        name,
+        isPrivate,
+      },
+    });
+  } catch (error) {
+    console.error('Error creating board:', error);
+    send(ws, {
+      type: 'ERROR',
+      payload: { code: 'CREATE_FAILED', message: 'Failed to create board' },
+    });
+  }
+}
+
+/**
  * Handle client disconnect
  */
 export function handleDisconnect(ws: WebSocket): void {
@@ -231,6 +325,9 @@ export async function handleMessage(ws: WebSocket, data: string): Promise<void> 
       break;
     case 'LEAVE_BOARD':
       handleDisconnect(ws);
+      break;
+    case 'CREATE_BOARD':
+      await handleCreateBoard(ws, message);
       break;
     default:
       send(ws, {

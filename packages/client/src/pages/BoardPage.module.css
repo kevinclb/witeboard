@@ -12,3 +12,76 @@
   background: var(--canvas-bg);
 }
 
+/* Loading state */
+.loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+}
+
+/* Access denied screen */
+.accessDenied {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  padding: 3rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  max-width: 400px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.accessDeniedIcon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.accessDeniedTitle {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 0.75rem;
+}
+
+.accessDeniedReason {
+  color: var(--text-secondary);
+  margin: 0 0 1.5rem;
+  line-height: 1.5;
+}
+
+.signInBtn {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  background: var(--accent-color);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 1rem;
+  transition: background 0.15s ease;
+}
+
+.signInBtn:hover {
+  background: var(--accent-hover);
+}
+
+.homeLink {
+  display: block;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: color 0.15s ease;
+}
+
+.homeLink:hover {
+  color: var(--accent-color);
+}
+
