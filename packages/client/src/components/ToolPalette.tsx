@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { ToolType } from '@witeboard/shared';
 import {
   setTool,
@@ -18,6 +18,20 @@ interface ToolPaletteProps {
 
 // Tool definitions with icons (using simple SVG paths)
 const TOOLS: { type: ToolType; label: string; icon: JSX.Element }[] = [
+  {
+    type: 'move',
+    label: 'Move / Pan',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M5 9l-3 3 3 3" />
+        <path d="M9 5l3-3 3 3" />
+        <path d="M15 19l-3 3-3-3" />
+        <path d="M19 9l3 3-3 3" />
+        <path d="M2 12h20" />
+        <path d="M12 2v20" />
+      </svg>
+    ),
+  },
   {
     type: 'pencil',
     label: 'Pencil',
@@ -105,6 +119,11 @@ export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
   const [activeColor, setActiveColor] = useState<string>(getCurrentColor());
   const [activeFontSize, setActiveFontSize] = useState<number>(getCurrentFontSize());
 
+  // Notify parent of initial tool on mount (important for mobile default)
+  useEffect(() => {
+    onToolChange?.(activeTool);
+  }, []);
+
   const handleToolClick = useCallback((tool: ToolType) => {
     setTool(tool);
     setActiveTool(tool);
@@ -121,8 +140,8 @@ export default function ToolPalette({ onToolChange }: ToolPaletteProps) {
     setActiveFontSize(size);
   }, []);
 
-  // Check if current tool supports color (eraser doesn't)
-  const supportsColor = activeTool !== 'eraser';
+  // Check if current tool supports color (eraser and move don't)
+  const supportsColor = activeTool !== 'eraser' && activeTool !== 'move';
   // Check if text tool is selected
   const isTextTool = activeTool === 'text';
 

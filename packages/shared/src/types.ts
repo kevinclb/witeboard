@@ -5,7 +5,7 @@
 /**
  * Tool types for drawing
  */
-export type ToolType = 'pencil' | 'marker' | 'brush' | 'rectangle' | 'ellipse' | 'line' | 'eraser' | 'text';
+export type ToolType = 'move' | 'pencil' | 'marker' | 'brush' | 'rectangle' | 'ellipse' | 'line' | 'eraser' | 'text';
 
 /**
  * Shape types

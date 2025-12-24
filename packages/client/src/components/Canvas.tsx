@@ -256,8 +256,8 @@ export default function Canvas({ boardId }: CanvasProps) {
     const [worldX, worldY] = screenToWorld(screenX, screenY);
     const tool = getCurrentTool();
 
-    // Middle mouse button OR space+left click = pan
-    if (e.button === 1 || (e.button === 0 && spacePressed.current)) {
+    // Middle mouse button OR space+left click OR move tool = pan
+    if (e.button === 1 || (e.button === 0 && spacePressed.current) || (e.button === 0 && tool === 'move')) {
       isPanning.current = true;
       lastPanPos.current = { x: screenX, y: screenY };
       if (containerRef.current) {
@@ -426,6 +426,8 @@ export default function Canvas({ boardId }: CanvasProps) {
   // Get appropriate cursor for current tool
   const getCursorForTool = (tool: ToolType): string => {
     switch (tool) {
+      case 'move':
+        return 'grab';
       case 'eraser':
         return 'pointer';
       case 'text':

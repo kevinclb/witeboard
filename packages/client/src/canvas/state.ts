@@ -179,10 +179,38 @@ export const FONT_SIZES = [16, 24, 32, 48, 64];
 export const DEFAULT_FONT_SIZE = 24;
 
 // ============================================================================
+// Mobile Detection
+// ============================================================================
+
+/**
+ * Detect if the user is on a mobile/touch device
+ */
+export function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  
+  // Check for touch capability
+  const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  
+  // Check user agent for mobile keywords
+  const mobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  );
+  
+  // Check screen width (mobile typically < 768px)
+  const smallScreen = window.innerWidth < 768;
+  
+  // Consider it mobile if touch + (mobile UA or small screen)
+  return hasTouch && (mobileUA || smallScreen);
+}
+
+// ============================================================================
 // Current Tool State
 // ============================================================================
 
-export let currentTool: ToolType = 'pencil';
+// Default to 'move' on mobile to prevent accidental drawing
+const defaultTool: ToolType = isMobileDevice() ? 'move' : 'pencil';
+
+export let currentTool: ToolType = defaultTool;
 export let currentColor = '#ffffff';
 export let currentWidth = TOOL_PRESETS.pencil.width;
 export let currentOpacity = TOOL_PRESETS.pencil.opacity;
