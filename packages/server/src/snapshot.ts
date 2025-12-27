@@ -1,4 +1,4 @@
-import { createCanvas, type Canvas, type CanvasRenderingContext2D } from 'canvas';
+import { createCanvas, type CanvasRenderingContext2D } from 'canvas';
 import type { DrawEvent } from '@witeboard/shared';
 import { isStrokePayload, isShapePayload, isTextPayload, isDeletePayload } from '@witeboard/shared';
 
@@ -8,41 +8,135 @@ import { isStrokePayload, isShapePayload, isTextPayload, isDeletePayload } from 
  * Uses node-canvas to render drawing events into a PNG image.
  * This allows new clients to load a snapshot image instead of
  * replaying thousands of individual draw events.
+ * 
+ * The renderer calculates bounding box of all content and creates
+ * a canvas sized to fit, with padding. Content is translated so
+ * coordinates map correctly when rendered on the client.
  */
 
-// Default canvas size for snapshots (will be scaled to fit content)
-const CANVAS_WIDTH = 4096;
-const CANVAS_HEIGHT = 4096;
+// Maximum canvas size (to prevent memory issues)
+const MAX_CANVAS_SIZE = 16384;
+const PADDING = 100;
+
+interface BoundingBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * Calculate bounding box of all events
+ */
+function calculateBounds(events: DrawEvent[], deletedIds: Set<string>): BoundingBox | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let hasContent = false;
+
+  for (const event of events) {
+    if (event.type === 'stroke' && isStrokePayload(event.payload)) {
+      if (deletedIds.has(event.payload.strokeId)) continue;
+      const { points, width } = event.payload;
+      for (const [x, y] of points) {
+        minX = Math.min(minX, x - width);
+        minY = Math.min(minY, y - width);
+        maxX = Math.max(maxX, x + width);
+        maxY = Math.max(maxY, y + width);
+        hasContent = true;
+      }
+    } else if (event.type === 'shape' && isShapePayload(event.payload)) {
+      if (deletedIds.has(event.payload.strokeId)) continue;
+      const { start, end, width } = event.payload;
+      minX = Math.min(minX, start[0] - width, end[0] - width);
+      minY = Math.min(minY, start[1] - width, end[1] - width);
+      maxX = Math.max(maxX, start[0] + width, end[0] + width);
+      maxY = Math.max(maxY, start[1] + width, end[1] + width);
+      hasContent = true;
+    } else if (event.type === 'text' && isTextPayload(event.payload)) {
+      if (deletedIds.has(event.payload.strokeId)) continue;
+      const { position, fontSize, text } = event.payload;
+      const lines = text.split('\n');
+      const textWidth = Math.max(...lines.map(l => l.length)) * fontSize * 0.6;
+      const textHeight = lines.length * fontSize * 1.3;
+      minX = Math.min(minX, position[0]);
+      minY = Math.min(minY, position[1]);
+      maxX = Math.max(maxX, position[0] + textWidth);
+      maxY = Math.max(maxY, position[1] + textHeight);
+      hasContent = true;
+    }
+  }
+
+  return hasContent ? { minX, minY, maxX, maxY } : null;
+}
+
+export interface SnapshotResult {
+  imageData: string;
+  offsetX: number;
+  offsetY: number;
+}
 
 /**
  * Render a list of draw events to a base64-encoded PNG
  * Note: Uses transparent background so client CSS background shows through
+ * Returns the image data and the world-space offset of the snapshot origin
  */
-export function renderEventsToSnapshot(events: DrawEvent[]): string {
-  const canvas = createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+export function renderEventsToSnapshot(events: DrawEvent[]): SnapshotResult {
+  // Track deleted stroke IDs
+  const deletedIds = new Set<string>();
+  
+  // First pass: collect all deleted stroke IDs and handle clears
+  let lastClearIndex = -1;
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (event.type === 'delete' && isDeletePayload(event.payload)) {
+      for (const id of event.payload.strokeIds) {
+        deletedIds.add(id);
+      }
+    } else if (event.type === 'clear') {
+      lastClearIndex = i;
+      deletedIds.clear(); // Clear resets everything
+    }
+  }
+
+  // Only render events after the last clear
+  const eventsToRender = lastClearIndex >= 0 ? events.slice(lastClearIndex + 1) : events;
+
+  // Calculate bounding box
+  const bounds = calculateBounds(eventsToRender, deletedIds);
+  
+  if (!bounds) {
+    // No content - return minimal transparent canvas at origin
+    const canvas = createCanvas(1, 1);
+    return {
+      imageData: canvas.toDataURL('image/png'),
+      offsetX: 0,
+      offsetY: 0,
+    };
+  }
+
+  // Calculate canvas size with padding
+  const width = Math.min(MAX_CANVAS_SIZE, Math.ceil(bounds.maxX - bounds.minX + PADDING * 2));
+  const height = Math.min(MAX_CANVAS_SIZE, Math.ceil(bounds.maxY - bounds.minY + PADDING * 2));
+
+  // Offset to translate content to positive coordinates
+  const offsetX = -bounds.minX + PADDING;
+  const offsetY = -bounds.minY + PADDING;
+
+  const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
-  // Canvas starts transparent by default - don't fill background
-  // This allows the client's CSS background to show through
+  // Canvas starts transparent by default
+  // Apply translation to handle arbitrary world coordinates
+  ctx.translate(offsetX, offsetY);
 
   // Set up line rendering
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Track deleted stroke IDs
-  const deletedIds = new Set<string>();
-
-  // First pass: collect all deleted stroke IDs
-  for (const event of events) {
-    if (event.type === 'delete' && isDeletePayload(event.payload)) {
-      for (const id of event.payload.strokeIds) {
-        deletedIds.add(id);
-      }
-    }
-  }
-
   // Second pass: render all non-deleted strokes/shapes/text
-  for (const event of events) {
+  for (const event of eventsToRender) {
     if (event.type === 'stroke' && isStrokePayload(event.payload)) {
       if (deletedIds.has(event.payload.strokeId)) continue;
       renderStroke(ctx, event.payload);
@@ -52,15 +146,16 @@ export function renderEventsToSnapshot(events: DrawEvent[]): string {
     } else if (event.type === 'text' && isTextPayload(event.payload)) {
       if (deletedIds.has(event.payload.strokeId)) continue;
       renderText(ctx, event.payload);
-    } else if (event.type === 'clear') {
-      // Clear resets the canvas (transparent)
-      ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-      deletedIds.clear();
     }
   }
 
-  // Convert to base64 PNG
-  return canvas.toDataURL('image/png');
+  // Convert to base64 PNG and return with offset info
+  // The offset tells the client where in world-space to draw this image
+  return {
+    imageData: canvas.toDataURL('image/png'),
+    offsetX: bounds.minX - PADDING,
+    offsetY: bounds.minY - PADDING,
+  };
 }
 
 /**
@@ -178,4 +273,3 @@ export function estimateSnapshotSize(events: DrawEvent[]): number {
   // PNG compression is typically 50-70% of raw data
   return events.length * 50;
 }
-

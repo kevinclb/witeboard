@@ -202,9 +202,9 @@ export default function Canvas({ boardId }: CanvasProps) {
           } else if (message.payload.snapshot) {
             // Snapshot sync: load snapshot image, then replay events after it
             const { snapshot, events } = message.payload;
-            console.log(`[Snapshot sync] Loading snapshot@${snapshot.seq} + ${events.length} events`);
+            console.log(`[Snapshot sync] Loading snapshot@${snapshot.seq} offset(${snapshot.offsetX}, ${snapshot.offsetY}) + ${events.length} events`);
             clearState();
-            loadSnapshot(snapshot.imageData, snapshot.seq)
+            loadSnapshot(snapshot.imageData, snapshot.seq, snapshot.offsetX, snapshot.offsetY)
               .then(() => {
                 // Apply events that happened after the snapshot
                 for (const event of events) {

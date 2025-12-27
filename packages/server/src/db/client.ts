@@ -183,6 +183,8 @@ export interface Snapshot {
   boardId: string;
   seq: number;
   imageData: string;  // Base64-encoded PNG
+  offsetX: number;    // World X coordinate of snapshot origin
+  offsetY: number;    // World Y coordinate of snapshot origin
   createdAt: Date;
 }
 
@@ -194,9 +196,11 @@ export async function getSnapshot(boardId: string): Promise<Snapshot | null> {
     board_id: string;
     seq: string;
     image_data: string;
+    offset_x: number;
+    offset_y: number;
     created_at: Date;
   }>(
-    `SELECT board_id, seq, image_data, created_at 
+    `SELECT board_id, seq, image_data, offset_x, offset_y, created_at 
      FROM board_snapshots 
      WHERE board_id = $1`,
     [boardId]
@@ -209,6 +213,8 @@ export async function getSnapshot(boardId: string): Promise<Snapshot | null> {
     boardId: row.board_id,
     seq: parseInt(row.seq, 10),
     imageData: row.image_data,
+    offsetX: row.offset_x,
+    offsetY: row.offset_y,
     createdAt: row.created_at,
   };
 }
@@ -219,14 +225,16 @@ export async function getSnapshot(boardId: string): Promise<Snapshot | null> {
 export async function saveSnapshot(
   boardId: string,
   seq: number,
-  imageData: string
+  imageData: string,
+  offsetX: number = 0,
+  offsetY: number = 0
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO board_snapshots (board_id, seq, image_data, created_at)
-     VALUES ($1, $2, $3, NOW())
+    `INSERT INTO board_snapshots (board_id, seq, image_data, offset_x, offset_y, created_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
      ON CONFLICT (board_id) 
-     DO UPDATE SET seq = $2, image_data = $3, created_at = NOW()`,
-    [boardId, seq, imageData]
+     DO UPDATE SET seq = $2, image_data = $3, offset_x = $4, offset_y = $5, created_at = NOW()`,
+    [boardId, seq, imageData, offsetX, offsetY]
   );
 }
 

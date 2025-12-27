@@ -190,6 +190,8 @@ export interface SyncSnapshotMessage {
     snapshot?: {
       imageData: string;  // Base64-encoded PNG of canvas state
       seq: number;        // Last event included in snapshot
+      offsetX: number;    // World X coordinate of snapshot origin
+      offsetY: number;    // World Y coordinate of snapshot origin
     };
   };
 }

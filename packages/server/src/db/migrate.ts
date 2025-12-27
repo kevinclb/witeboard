@@ -50,8 +50,14 @@ CREATE TABLE IF NOT EXISTS board_snapshots (
   board_id TEXT PRIMARY KEY REFERENCES boards(id) ON DELETE CASCADE,
   seq BIGINT NOT NULL,              -- Last event sequence included in snapshot
   image_data TEXT NOT NULL,         -- Base64-encoded PNG
+  offset_x DOUBLE PRECISION NOT NULL DEFAULT 0,  -- World X coordinate of snapshot origin
+  offset_y DOUBLE PRECISION NOT NULL DEFAULT 0,  -- World Y coordinate of snapshot origin
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Add offset columns if they don't exist (for existing databases)
+ALTER TABLE board_snapshots ADD COLUMN IF NOT EXISTS offset_x DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE board_snapshots ADD COLUMN IF NOT EXISTS offset_y DOUBLE PRECISION NOT NULL DEFAULT 0;
 
 -- Ensure global board exists (public, no owner)
 INSERT INTO boards (id, name, is_private) 

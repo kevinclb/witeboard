@@ -342,6 +342,8 @@ export function clearState(): void {
   resetViewport();
   snapshotImage = null;
   snapshotSeq = 0;
+  snapshotOffsetX = 0;
+  snapshotOffsetY = 0;
   clearAllCanvases();
 }
 
@@ -366,11 +368,17 @@ export function getSnapshotSeq(): number {
   return snapshotSeq;
 }
 
+// Store snapshot offset for redrawing on pan/zoom
+let snapshotOffsetX = 0;
+let snapshotOffsetY = 0;
+
 /**
  * Load a snapshot image onto the history canvas
  * Returns a promise that resolves when the image is loaded
+ * @param offsetX World X coordinate where snapshot should be positioned
+ * @param offsetY World Y coordinate where snapshot should be positioned
  */
-export function loadSnapshot(imageData: string, seq: number): Promise<void> {
+export function loadSnapshot(imageData: string, seq: number, offsetX: number = 0, offsetY: number = 0): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!historyCtx) {
       reject(new Error('History canvas not initialized'));
@@ -383,16 +391,21 @@ export function loadSnapshot(imageData: string, seq: number): Promise<void> {
       // Clear and draw the snapshot
       clearAllCanvases();
       
-      // Store the image for redrawing on pan/zoom
+      // Store the image and offset for redrawing on pan/zoom
       snapshotImage = img;
+      snapshotOffsetX = offsetX;
+      snapshotOffsetY = offsetY;
       
-      // Draw the snapshot image (it's already the correct size)
-      historyCtx!.drawImage(img, 0, 0);
+      // Draw the snapshot image at the correct world-space position
+      historyCtx!.save();
+      applyViewportTransform(historyCtx!);
+      historyCtx!.drawImage(img, offsetX, offsetY);
+      historyCtx!.restore();
       
       // Track snapshot sequence
       snapshotSeq = seq;
       
-      console.log(`Loaded snapshot at seq ${seq}`);
+      console.log(`Loaded snapshot at seq ${seq}, offset (${offsetX}, ${offsetY})`);
       resolve();
     };
 
@@ -866,8 +879,8 @@ export function redrawAll(): void {
   if (snapshotImage && historyCtx) {
     historyCtx.save();
     applyViewportTransform(historyCtx);
-    // Snapshot was rendered in world coordinates at origin
-    historyCtx.drawImage(snapshotImage, 0, 0);
+    // Snapshot is positioned at its world-space offset
+    historyCtx.drawImage(snapshotImage, snapshotOffsetX, snapshotOffsetY);
     historyCtx.restore();
   }
 
@@ -908,6 +921,8 @@ export function redrawAll(): void {
     } else if (event.type === 'clear') {
       clearAllCanvases();
       snapshotImage = null; // Clear also removes snapshot
+      snapshotOffsetX = 0;
+      snapshotOffsetY = 0;
       deletedStrokeIds.clear();
       strokeBoundsMap.clear();
     }

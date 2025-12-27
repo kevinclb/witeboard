@@ -36,9 +36,10 @@ import {
 } from './db/client.js';
 import { verifyClerkToken } from './auth.js';
 import { renderEventsToSnapshot } from './snapshot.js';
+import { checkDrawLimit, checkCursorLimit } from './rate-limiter.js';
 
 // Compaction settings
-const COMPACTION_THRESHOLD = 10;  // Create snapshot every 10 events (lower for testing)
+const COMPACTION_THRESHOLD = 5000;  // Create snapshot every 5000 events
 
 // Track ongoing compactions to avoid duplicates
 const compactionInProgress = new Set<string>();
@@ -72,13 +73,13 @@ async function maybeCompactBoard(boardId: string, currentSeq: number): Promise<v
 
     // Render to snapshot
     const startTime = Date.now();
-    const imageData = renderEventsToSnapshot(events);
+    const snapshotResult = renderEventsToSnapshot(events);
     const renderTime = Date.now() - startTime;
 
-    // Save snapshot
-    await saveSnapshot(boardId, currentSeq, imageData);
+    // Save snapshot with offset info
+    await saveSnapshot(boardId, currentSeq, snapshotResult.imageData, snapshotResult.offsetX, snapshotResult.offsetY);
     
-    const sizeKB = Math.round(imageData.length / 1024);
+    const sizeKB = Math.round(snapshotResult.imageData.length / 1024);
     console.log(`Compaction complete for ${boardId}: ${events.length} events -> ${sizeKB}KB snapshot (${renderTime}ms render)`);
   } finally {
     compactionInProgress.delete(boardId);
@@ -219,7 +220,7 @@ async function handleHello(ws: WebSocket, message: HelloMessage): Promise<void> 
     const lastSeq = await getMaxSeq(boardId);
     
     let events: Awaited<ReturnType<typeof getEvents>>;
-    let snapshotData: { imageData: string; seq: number } | undefined;
+    let snapshotData: { imageData: string; seq: number; offsetX: number; offsetY: number } | undefined;
     
     if (isDelta) {
       // Delta sync: only events after resumeFromSeq
@@ -232,7 +233,12 @@ async function handleHello(ws: WebSocket, message: HelloMessage): Promise<void> 
       if (snapshot) {
         // Use snapshot + events after snapshot
         events = await getEventsAfterSnapshot(boardId, snapshot.seq);
-        snapshotData = { imageData: snapshot.imageData, seq: snapshot.seq };
+        snapshotData = { 
+          imageData: snapshot.imageData, 
+          seq: snapshot.seq,
+          offsetX: snapshot.offsetX,
+          offsetY: snapshot.offsetY,
+        };
         console.log(`Sending snapshot sync: snapshot@${snapshot.seq} + ${events.length} events (lastSeq=${lastSeq})`);
       } else {
         // No snapshot: send all events
@@ -273,6 +279,11 @@ async function handleHello(ws: WebSocket, message: HelloMessage): Promise<void> 
  * Handle DRAW_EVENT message - sequence, persist, broadcast
  */
 async function handleDrawEvent(ws: WebSocket, message: DrawEventMessage): Promise<void> {
+  // Rate limit check - silently drop if exceeded
+  if (!checkDrawLimit(ws)) {
+    return;
+  }
+
   const boardId = getConnectionBoard(ws);
   const identity = getConnectionIdentity(ws);
 
@@ -316,6 +327,11 @@ async function handleDrawEvent(ws: WebSocket, message: DrawEventMessage): Promis
  * Handle CURSOR_MOVE message - update presence and queue for batched broadcast
  */
 function handleCursorMove(ws: WebSocket, message: CursorMoveMessage): void {
+  // Rate limit check - silently drop if exceeded
+  if (!checkCursorLimit(ws)) {
+    return;
+  }
+
   const result = updateCursor(ws, message.payload.x, message.payload.y);
 
   if (!result) {
