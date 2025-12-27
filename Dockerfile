@@ -49,9 +49,6 @@ RUN pnpm --filter @witeboard/server build
 # Production stage
 FROM node:20-alpine AS runner
 
-# Install pnpm for workspace resolution
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
 # Install canvas runtime dependencies (no build tools needed)
 RUN apk add --no-cache \
     cairo \
@@ -63,13 +60,15 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-# Copy package files for production install
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Copy package files (needed for pnpm workspace resolution)
+COPY package.json pnpm-workspace.yaml ./
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/server/package.json ./packages/server/
 
-# Install production dependencies only
-RUN pnpm install --frozen-lockfile --prod
+# Copy pre-built node_modules from builder (includes compiled canvas)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=builder /app/packages/server/node_modules ./packages/server/node_modules
 
 # Copy built artifacts
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
