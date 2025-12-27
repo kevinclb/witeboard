@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import type { PresenceState, UserIdentity } from '@witeboard/shared';
+import type { PresenceState, UserIdentity, CursorData } from '@witeboard/shared';
 import { generateAnonymousName, generateAvatarColor, generateUUID } from '@witeboard/shared';
 
 /**
@@ -11,6 +11,74 @@ const connectionToUser = new Map<WebSocket, UserIdentity>();
 const connectionToBoard = new Map<WebSocket, string>();
 const clientsByBoard = new Map<string, Set<WebSocket>>();
 const presenceByBoard = new Map<string, Map<string, PresenceState>>();
+
+// Cursor batching state
+const cursorBatches = new Map<string, Map<string, CursorData>>(); // boardId -> userId -> CursorData
+let cursorBatchTimer: ReturnType<typeof setInterval> | null = null;
+let cursorBatchBroadcaster: ((boardId: string, cursors: CursorData[]) => void) | null = null;
+
+/**
+ * Set the cursor batch broadcaster function (called from handlers.ts)
+ */
+export function setCursorBatchBroadcaster(
+  broadcaster: (boardId: string, cursors: CursorData[]) => void
+): void {
+  cursorBatchBroadcaster = broadcaster;
+  
+  // Start the batch timer (50ms interval)
+  if (!cursorBatchTimer) {
+    cursorBatchTimer = setInterval(flushCursorBatches, 50);
+  }
+}
+
+/**
+ * Stop cursor batching (for graceful shutdown)
+ */
+export function stopCursorBatching(): void {
+  if (cursorBatchTimer) {
+    clearInterval(cursorBatchTimer);
+    cursorBatchTimer = null;
+  }
+  cursorBatchBroadcaster = null;
+}
+
+/**
+ * Queue a cursor update for batched broadcast
+ */
+export function queueCursorUpdate(
+  boardId: string,
+  userId: string,
+  displayName: string,
+  avatarColor: string | undefined,
+  x: number,
+  y: number
+): void {
+  if (!cursorBatches.has(boardId)) {
+    cursorBatches.set(boardId, new Map());
+  }
+  
+  cursorBatches.get(boardId)!.set(userId, {
+    userId,
+    displayName,
+    avatarColor,
+    x,
+    y,
+  });
+}
+
+/**
+ * Flush all queued cursor updates (called every 50ms)
+ */
+function flushCursorBatches(): void {
+  if (!cursorBatchBroadcaster) return;
+  
+  for (const [boardId, cursors] of cursorBatches) {
+    if (cursors.size > 0) {
+      cursorBatchBroadcaster(boardId, Array.from(cursors.values()));
+      cursors.clear();
+    }
+  }
+}
 
 /**
  * Create or restore user identity from HELLO payload

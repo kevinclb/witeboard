@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@clerk/backend": "^2.29.0",
+    "@clerk/shared": "^3.13.0",
     "@witeboard/shared": "workspace:*",
     "dotenv": "^16.3.1",
     "pg": "^8.11.3",
