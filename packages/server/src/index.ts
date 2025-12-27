@@ -23,28 +23,13 @@ const { generateUUID } = await import('@witeboard/shared');
 
 /**
  * One-time migration: Clear old snapshots that have non-transparent backgrounds
- * Uses a migration marker to only run once
+ * This runs once, then this function can be removed from codebase
  */
 async function clearOldSnapshots(): Promise<void> {
-  // Check if we already ran this migration
-  const check = await pool.query(
-    `SELECT 1 FROM board_snapshots WHERE board_id = '__migration_transparent_bg_done__' LIMIT 1`
-  );
-  if (check.rows.length > 0) return; // Already done
-  
-  // Clear all existing snapshots (they have the old blue background)
-  const result = await pool.query(
-    `DELETE FROM board_snapshots WHERE board_id != '__migration_transparent_bg_done__'`
-  );
+  // Just clear all snapshots - they'll regenerate with transparent backgrounds
+  // This is safe because snapshots are just a cache/optimization
+  const result = await pool.query('DELETE FROM board_snapshots');
   const count = result.rowCount ?? 0;
-  
-  // Mark migration as complete
-  await pool.query(
-    `INSERT INTO board_snapshots (board_id, seq, image_data, created_at) 
-     VALUES ('__migration_transparent_bg_done__', 0, '', NOW())
-     ON CONFLICT (board_id) DO NOTHING`
-  );
-  
   if (count > 0) {
     console.log(`✓ Cleared ${count} old snapshot(s) - will regenerate with transparent background`);
   }
