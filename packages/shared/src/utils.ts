@@ -75,3 +75,76 @@ export function throttle<Args extends unknown[]>(
   };
 }
 
+/**
+ * Calculate perpendicular distance from a point to a line segment
+ */
+function perpendicularDistance(
+  point: [number, number],
+  lineStart: [number, number],
+  lineEnd: [number, number]
+): number {
+  const [px, py] = point;
+  const [x1, y1] = lineStart;
+  const [x2, y2] = lineEnd;
+
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  // Line segment is a point
+  if (dx === 0 && dy === 0) {
+    return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+  }
+
+  // Calculate perpendicular distance using cross product
+  const numerator = Math.abs(dy * px - dx * py + x2 * y1 - y2 * x1);
+  const denominator = Math.sqrt(dx * dx + dy * dy);
+
+  return numerator / denominator;
+}
+
+/**
+ * Douglas-Peucker line simplification algorithm
+ * Reduces the number of points in a stroke while preserving visual fidelity.
+ * 
+ * @param points - Array of [x, y] coordinate pairs
+ * @param epsilon - Maximum perpendicular distance tolerance (default: 1.0 pixel)
+ * @returns Simplified array of points
+ * 
+ * Performance: Reduces ~120 points (2s stroke at 60Hz) to ~15-20 points
+ */
+export function simplifyStroke(
+  points: [number, number][],
+  epsilon: number = 1.0
+): [number, number][] {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  // Find the point with maximum distance from the line between first and last
+  let maxDistance = 0;
+  let maxIndex = 0;
+
+  const first = points[0];
+  const last = points[points.length - 1];
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const distance = perpendicularDistance(points[i], first, last);
+    if (distance > maxDistance) {
+      maxDistance = distance;
+      maxIndex = i;
+    }
+  }
+
+  // If max distance exceeds epsilon, recursively simplify
+  if (maxDistance > epsilon) {
+    const left = simplifyStroke(points.slice(0, maxIndex + 1), epsilon);
+    const right = simplifyStroke(points.slice(maxIndex), epsilon);
+
+    // Combine results (avoiding duplicate point at maxIndex)
+    return [...left.slice(0, -1), ...right];
+  }
+
+  // All points between first and last are within tolerance - keep only endpoints
+  return [first, last];
+}
+

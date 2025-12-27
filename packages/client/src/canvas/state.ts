@@ -1,5 +1,5 @@
 import type { DrawEvent, ToolType, ShapeType } from '@witeboard/shared';
-import { generateUUID, isStrokePayload, isShapePayload, isDeletePayload, isTextPayload } from '@witeboard/shared';
+import { generateUUID, isStrokePayload, isShapePayload, isDeletePayload, isTextPayload, simplifyStroke } from '@witeboard/shared';
 
 /**
  * Canvas Engine State - Imperative module (NOT React state)
@@ -1015,9 +1015,27 @@ export function continueStroke(worldX: number, worldY: number): void {
 
 /**
  * End the pending stroke and return it
+ * Applies Douglas-Peucker simplification to reduce point count while preserving shape
  */
 export function endStroke(): PendingStroke | null {
-  const stroke = pendingStroke;
+  if (!pendingStroke) {
+    return null;
+  }
+
+  const originalCount = pendingStroke.points.length;
+  
+  // Apply stroke simplification (epsilon = 1.0 pixel tolerance)
+  const simplifiedPoints = simplifyStroke(pendingStroke.points, 1.0);
+  
+  if (originalCount > 10) {
+    console.log(`[Stroke simplification] ${originalCount} → ${simplifiedPoints.length} points (${Math.round((1 - simplifiedPoints.length / originalCount) * 100)}% reduction)`);
+  }
+
+  const stroke: PendingStroke = {
+    ...pendingStroke,
+    points: simplifiedPoints,
+  };
+  
   pendingStroke = null;
   return stroke;
 }

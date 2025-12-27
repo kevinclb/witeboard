@@ -193,9 +193,11 @@ export default function Canvas({ boardId }: CanvasProps) {
       switch (message.type) {
         case 'SYNC_SNAPSHOT':
           if (message.payload.isDelta) {
-            // Delta sync: only replay new events (don't clear existing state)
+            // Delta sync: apply only new events (preserving existing state)
             console.log(`[Delta sync] Applying ${message.payload.events.length} new events`);
-            replayAll(message.payload.events);
+            for (const event of message.payload.events) {
+              applyDrawEvent(event);
+            }
           } else {
             // Full sync: clear and replay everything
             clearState();
