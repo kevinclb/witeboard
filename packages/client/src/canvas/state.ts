@@ -340,6 +340,8 @@ export function clearState(): void {
   strokeBoundsMap.clear();
   clearUndoStack();
   resetViewport();
+  snapshotImage = null;
+  snapshotSeq = 0;
   clearAllCanvases();
 }
 
@@ -355,6 +357,7 @@ export function clearAllCanvases(): void {
 
 // Track snapshot load state
 let snapshotSeq: number = 0;
+let snapshotImage: HTMLImageElement | null = null;
 
 /**
  * Get the current snapshot sequence (for debugging/display)
@@ -379,6 +382,9 @@ export function loadSnapshot(imageData: string, seq: number): Promise<void> {
     img.onload = () => {
       // Clear and draw the snapshot
       clearAllCanvases();
+      
+      // Store the image for redrawing on pan/zoom
+      snapshotImage = img;
       
       // Draw the snapshot image (it's already the correct size)
       historyCtx!.drawImage(img, 0, 0);
@@ -856,6 +862,15 @@ function registerTextBounds(strokeId: string, text: string, position: [number, n
 export function redrawAll(): void {
   clearAllCanvases();
 
+  // Draw snapshot first if we have one (it's the base layer)
+  if (snapshotImage && historyCtx) {
+    historyCtx.save();
+    applyViewportTransform(historyCtx);
+    // Snapshot was rendered in world coordinates at origin
+    historyCtx.drawImage(snapshotImage, 0, 0);
+    historyCtx.restore();
+  }
+
   // Replay all strokes/shapes/text with current viewport, skipping deleted ones
   for (const event of drawLog) {
     if (event.type === 'stroke' && isStrokePayload(event.payload)) {
@@ -892,6 +907,7 @@ export function redrawAll(): void {
       );
     } else if (event.type === 'clear') {
       clearAllCanvases();
+      snapshotImage = null; // Clear also removes snapshot
       deletedStrokeIds.clear();
       strokeBoundsMap.clear();
     }

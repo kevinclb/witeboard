@@ -6,6 +6,7 @@
   bottom: 0;
   overflow: hidden;
   cursor: crosshair;
+  background: var(--canvas-bg);
 }
 
 .canvas {

@@ -14,8 +14,8 @@ import { isStrokePayload, isShapePayload, isTextPayload, isDeletePayload } from 
 const CANVAS_WIDTH = 4096;
 const CANVAS_HEIGHT = 4096;
 
-// Background color (transparent or match client)
-const BACKGROUND_COLOR = '#1a1a2e';
+// Background color (must match client's --canvas-bg CSS variable)
+const BACKGROUND_COLOR = '#1e1e1e';
 
 /**
  * Render a list of draw events to a base64-encoded PNG
