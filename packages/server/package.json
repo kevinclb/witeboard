@@ -13,6 +13,7 @@
     "@clerk/backend": "^2.29.0",
     "@clerk/shared": "^3.13.0",
     "@witeboard/shared": "workspace:*",
+    "canvas": "^3.2.0",
     "dotenv": "^16.3.1",
     "pg": "^8.11.3",
     "ws": "^8.16.0"
