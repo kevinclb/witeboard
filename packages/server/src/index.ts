@@ -15,11 +15,40 @@ dotenv.config({ path: path.join(serverRoot, '.env.local'), override: true });
 
 // Now import modules that depend on environment variables
 const { handleMessage, handleDisconnect } = await import('./handlers.js');
-const { ensureBoardExists, getUserBoards, deleteBoard, createBoard } = await import('./db/client.js');
+const { ensureBoardExists, getUserBoards, deleteBoard, createBoard, pool } = await import('./db/client.js');
 const { initBoardSequence } = await import('./sequencer.js');
 const { runMigrations } = await import('./db/migrate.js');
 const { verifyClerkToken } = await import('./auth.js');
 const { generateUUID } = await import('@witeboard/shared');
+
+/**
+ * One-time migration: Clear old snapshots that have non-transparent backgrounds
+ * Uses a migration marker to only run once
+ */
+async function clearOldSnapshots(): Promise<void> {
+  // Check if we already ran this migration
+  const check = await pool.query(
+    `SELECT 1 FROM board_snapshots WHERE board_id = '__migration_transparent_bg_done__' LIMIT 1`
+  );
+  if (check.rows.length > 0) return; // Already done
+  
+  // Clear all existing snapshots (they have the old blue background)
+  const result = await pool.query(
+    `DELETE FROM board_snapshots WHERE board_id != '__migration_transparent_bg_done__'`
+  );
+  const count = result.rowCount ?? 0;
+  
+  // Mark migration as complete
+  await pool.query(
+    `INSERT INTO board_snapshots (board_id, seq, image_data, created_at) 
+     VALUES ('__migration_transparent_bg_done__', 0, '', NOW())
+     ON CONFLICT (board_id) DO NOTHING`
+  );
+  
+  if (count > 0) {
+    console.log(`✓ Cleared ${count} old snapshot(s) - will regenerate with transparent background`);
+  }
+}
 const PORT = parseInt(process.env.PORT || process.env.WS_PORT || '3001', 10);
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -209,6 +238,9 @@ async function main() {
   try {
     // Run migrations (idempotent - safe to run every startup)
     await runMigrations();
+    
+    // One-time: clear old snapshots with blue background
+    await clearOldSnapshots();
     
     // Ensure global board exists and init sequence
     await ensureBoardExists('global', 'Global Whiteboard');

@@ -14,19 +14,16 @@ import { isStrokePayload, isShapePayload, isTextPayload, isDeletePayload } from 
 const CANVAS_WIDTH = 4096;
 const CANVAS_HEIGHT = 4096;
 
-// Background color (must match client's --canvas-bg CSS variable)
-const BACKGROUND_COLOR = '#1e1e1e';
-
 /**
  * Render a list of draw events to a base64-encoded PNG
+ * Note: Uses transparent background so client CSS background shows through
  */
 export function renderEventsToSnapshot(events: DrawEvent[]): string {
   const canvas = createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
   const ctx = canvas.getContext('2d');
 
-  // Fill background
-  ctx.fillStyle = BACKGROUND_COLOR;
-  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  // Canvas starts transparent by default - don't fill background
+  // This allows the client's CSS background to show through
 
   // Set up line rendering
   ctx.lineCap = 'round';
@@ -56,9 +53,8 @@ export function renderEventsToSnapshot(events: DrawEvent[]): string {
       if (deletedIds.has(event.payload.strokeId)) continue;
       renderText(ctx, event.payload);
     } else if (event.type === 'clear') {
-      // Clear resets the canvas
-      ctx.fillStyle = BACKGROUND_COLOR;
-      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      // Clear resets the canvas (transparent)
+      ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       deletedIds.clear();
     }
   }
