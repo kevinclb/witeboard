@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS drawing_events (
 CREATE INDEX IF NOT EXISTS idx_drawing_events_board_seq 
 ON drawing_events (board_id, seq);
 
+-- Board snapshots table (compacted canvas state)
+-- Stores base64-encoded PNG snapshots for faster initial load
+CREATE TABLE IF NOT EXISTS board_snapshots (
+  board_id TEXT PRIMARY KEY REFERENCES boards(id) ON DELETE CASCADE,
+  seq BIGINT NOT NULL,              -- Last event sequence included in snapshot
+  image_data TEXT NOT NULL,         -- Base64-encoded PNG
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Ensure global board exists (public, no owner)
 INSERT INTO boards (id, name, is_private) 
 VALUES ('global', 'Global Whiteboard', false) 

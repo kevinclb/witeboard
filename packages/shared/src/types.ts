@@ -187,6 +187,10 @@ export interface SyncSnapshotMessage {
     events: DrawEvent[];
     lastSeq: number;   // Highest seq in this board (for reconnect)
     isDelta: boolean;  // True if this is a partial sync from resumeFromSeq
+    snapshot?: {
+      imageData: string;  // Base64-encoded PNG of canvas state
+      seq: number;        // Last event included in snapshot
+    };
   };
 }
 

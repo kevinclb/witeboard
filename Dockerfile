@@ -4,6 +4,18 @@ FROM node:20-alpine AS builder
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# Install canvas native dependencies (Cairo, Pango, etc.) for node-canvas
+RUN apk add --no-cache \
+    build-base \
+    g++ \
+    cairo-dev \
+    jpeg-dev \
+    pango-dev \
+    giflib-dev \
+    librsvg-dev \
+    pixman-dev \
+    python3
+
 WORKDIR /app
 
 # Copy package files
@@ -12,7 +24,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/client/package.json ./packages/client/
 COPY packages/server/package.json ./packages/server/
 
-# Install dependencies
+# Install dependencies (including native canvas compilation)
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
@@ -39,6 +51,15 @@ FROM node:20-alpine AS runner
 
 # Install pnpm for workspace resolution
 RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Install canvas runtime dependencies (no build tools needed)
+RUN apk add --no-cache \
+    cairo \
+    jpeg \
+    pango \
+    giflib \
+    librsvg \
+    pixman
 
 WORKDIR /app
 

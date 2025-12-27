@@ -353,6 +353,52 @@ export function clearAllCanvases(): void {
   cursorCtx?.clearRect(0, 0, width, height);
 }
 
+// Track snapshot load state
+let snapshotSeq: number = 0;
+
+/**
+ * Get the current snapshot sequence (for debugging/display)
+ */
+export function getSnapshotSeq(): number {
+  return snapshotSeq;
+}
+
+/**
+ * Load a snapshot image onto the history canvas
+ * Returns a promise that resolves when the image is loaded
+ */
+export function loadSnapshot(imageData: string, seq: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!historyCtx) {
+      reject(new Error('History canvas not initialized'));
+      return;
+    }
+
+    const img = new Image();
+    
+    img.onload = () => {
+      // Clear and draw the snapshot
+      clearAllCanvases();
+      
+      // Draw the snapshot image (it's already the correct size)
+      historyCtx!.drawImage(img, 0, 0);
+      
+      // Track snapshot sequence
+      snapshotSeq = seq;
+      
+      console.log(`Loaded snapshot at seq ${seq}`);
+      resolve();
+    };
+
+    img.onerror = () => {
+      reject(new Error('Failed to load snapshot image'));
+    };
+
+    // Load the base64 image
+    img.src = imageData;
+  });
+}
+
 /**
  * Clear the live canvas only
  */

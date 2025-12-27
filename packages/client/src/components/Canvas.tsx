@@ -37,6 +37,7 @@ import {
   pushToUndoStack,
   popFromUndoStack,
   canUndo,
+  loadSnapshot,
 } from '../canvas/state';
 import ToolPalette from './ToolPalette';
 import styles from './Canvas.module.css';
@@ -198,8 +199,28 @@ export default function Canvas({ boardId }: CanvasProps) {
             for (const event of message.payload.events) {
               applyDrawEvent(event);
             }
+          } else if (message.payload.snapshot) {
+            // Snapshot sync: load snapshot image, then replay events after it
+            const { snapshot, events } = message.payload;
+            console.log(`[Snapshot sync] Loading snapshot@${snapshot.seq} + ${events.length} events`);
+            clearState();
+            loadSnapshot(snapshot.imageData, snapshot.seq)
+              .then(() => {
+                // Apply events that happened after the snapshot
+                for (const event of events) {
+                  applyDrawEvent(event);
+                }
+                strokesSinceCompact = events.length;
+                setZoomLevel(100);
+              })
+              .catch((err) => {
+                console.error('Failed to load snapshot, falling back to full replay:', err);
+                // Fallback: replay all events
+                replayAll(events);
+              });
           } else {
-            // Full sync: clear and replay everything
+            // Full sync: clear and replay everything (no snapshot available)
+            console.log(`[Full sync] Replaying ${message.payload.events.length} events`);
             clearState();
             replayAll(message.payload.events);
             strokesSinceCompact = 0;

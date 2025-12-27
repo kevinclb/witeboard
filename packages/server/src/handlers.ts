@@ -21,9 +21,69 @@ import {
   queueCursorUpdate,
   setCursorBatchBroadcaster,
 } from './presence.js';
-import { sequenceEvent, initBoardSequence } from './sequencer.js';
-import { getEvents, getEventsFromSeq, getMaxSeq, ensureBoardExists, getBoard, createBoard, canAccessBoard } from './db/client.js';
+import { sequenceEvent, initBoardSequence, getCurrentSeq } from './sequencer.js';
+import { 
+  getEvents, 
+  getEventsFromSeq, 
+  getMaxSeq, 
+  ensureBoardExists, 
+  getBoard, 
+  createBoard, 
+  canAccessBoard,
+  getSnapshot,
+  saveSnapshot,
+  getEventsAfterSnapshot,
+} from './db/client.js';
 import { verifyClerkToken } from './auth.js';
+import { renderEventsToSnapshot } from './snapshot.js';
+
+// Compaction settings
+const COMPACTION_THRESHOLD = 10;  // Create snapshot every 10 events (lower for testing)
+
+// Track ongoing compactions to avoid duplicates
+const compactionInProgress = new Set<string>();
+
+/**
+ * Check if a board should be compacted and trigger if needed
+ * Runs asynchronously, non-blocking
+ */
+async function maybeCompactBoard(boardId: string, currentSeq: number): Promise<void> {
+  // Only compact at threshold intervals
+  if (currentSeq % COMPACTION_THRESHOLD !== 0) {
+    return;
+  }
+
+  // Avoid duplicate compactions
+  if (compactionInProgress.has(boardId)) {
+    return;
+  }
+
+  try {
+    compactionInProgress.add(boardId);
+    console.log(`Starting compaction for board ${boardId} at seq ${currentSeq}...`);
+
+    // Get all events up to current seq
+    const events = await getEvents(boardId);
+    
+    if (events.length < COMPACTION_THRESHOLD) {
+      console.log(`Skipping compaction: only ${events.length} events`);
+      return;
+    }
+
+    // Render to snapshot
+    const startTime = Date.now();
+    const imageData = renderEventsToSnapshot(events);
+    const renderTime = Date.now() - startTime;
+
+    // Save snapshot
+    await saveSnapshot(boardId, currentSeq, imageData);
+    
+    const sizeKB = Math.round(imageData.length / 1024);
+    console.log(`Compaction complete for ${boardId}: ${events.length} events -> ${sizeKB}KB snapshot (${renderTime}ms render)`);
+  } finally {
+    compactionInProgress.delete(boardId);
+  }
+}
 
 /**
  * Send a message to a single client
@@ -154,18 +214,36 @@ async function handleHello(ws: WebSocket, message: HelloMessage): Promise<void> 
       },
     });
 
-    // Send SYNC_SNAPSHOT - delta sync if resumeFromSeq provided, otherwise full sync
+    // Send SYNC_SNAPSHOT - with snapshot if available, delta if resumeFromSeq
     const isDelta = resumeFromSeq !== undefined && resumeFromSeq > 0;
-    const events = isDelta
-      ? await getEventsFromSeq(boardId, resumeFromSeq)
-      : await getEvents(boardId);
     const lastSeq = await getMaxSeq(boardId);
     
-    console.log(`Sending ${isDelta ? 'delta' : 'full'} sync: ${events.length} events (lastSeq=${lastSeq})`);
+    let events: Awaited<ReturnType<typeof getEvents>>;
+    let snapshotData: { imageData: string; seq: number } | undefined;
+    
+    if (isDelta) {
+      // Delta sync: only events after resumeFromSeq
+      events = await getEventsFromSeq(boardId, resumeFromSeq);
+      console.log(`Sending delta sync: ${events.length} events after seq ${resumeFromSeq}`);
+    } else {
+      // Full sync: check for snapshot first
+      const snapshot = await getSnapshot(boardId);
+      
+      if (snapshot) {
+        // Use snapshot + events after snapshot
+        events = await getEventsAfterSnapshot(boardId, snapshot.seq);
+        snapshotData = { imageData: snapshot.imageData, seq: snapshot.seq };
+        console.log(`Sending snapshot sync: snapshot@${snapshot.seq} + ${events.length} events (lastSeq=${lastSeq})`);
+      } else {
+        // No snapshot: send all events
+        events = await getEvents(boardId);
+        console.log(`Sending full sync: ${events.length} events (no snapshot, lastSeq=${lastSeq})`);
+      }
+    }
     
     send(ws, {
       type: 'SYNC_SNAPSHOT',
-      payload: { boardId, events, lastSeq, isDelta },
+      payload: { boardId, events, lastSeq, isDelta, snapshot: snapshotData },
     });
 
     // Send USER_LIST to the joining client
@@ -219,6 +297,11 @@ async function handleDrawEvent(ws: WebSocket, message: DrawEventMessage): Promis
     broadcastAll(boardId, {
       type: 'DRAW_EVENT',
       payload: event,
+    });
+
+    // Check if we should trigger compaction (async, non-blocking)
+    maybeCompactBoard(boardId, event.seq).catch((err) => {
+      console.error('Compaction error:', err);
     });
   } catch (error) {
     console.error('Error handling DRAW_EVENT:', error);
