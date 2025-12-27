@@ -154,6 +154,18 @@ export async function getEvents(boardId: string): Promise<DrawEvent[]> {
 }
 
 /**
+ * Get events for a board after a given sequence number (for delta sync)
+ * Returns events where seq > fromSeq, ordered by seq ascending
+ */
+export async function getEventsFromSeq(boardId: string, fromSeq: number): Promise<DrawEvent[]> {
+  const result = await pool.query<{ event: DrawEvent }>(
+    `SELECT event FROM drawing_events WHERE board_id = $1 AND seq > $2 ORDER BY seq ASC`,
+    [boardId, fromSeq]
+  );
+  return result.rows.map((row: { event: DrawEvent }) => row.event);
+}
+
+/**
  * Clear all events for a board (for testing/reset)
  */
 export async function clearBoard(boardId: string): Promise<void> {

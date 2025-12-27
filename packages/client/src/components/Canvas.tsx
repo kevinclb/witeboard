@@ -192,10 +192,17 @@ export default function Canvas({ boardId }: CanvasProps) {
     const unsubscribe = wsClient.subscribe((message: ServerMessage) => {
       switch (message.type) {
         case 'SYNC_SNAPSHOT':
-          clearState();
-          replayAll(message.payload.events);
-          strokesSinceCompact = 0;
-          setZoomLevel(100);
+          if (message.payload.isDelta) {
+            // Delta sync: only replay new events (don't clear existing state)
+            console.log(`[Delta sync] Applying ${message.payload.events.length} new events`);
+            replayAll(message.payload.events);
+          } else {
+            // Full sync: clear and replay everything
+            clearState();
+            replayAll(message.payload.events);
+            strokesSinceCompact = 0;
+            setZoomLevel(100);
+          }
           break;
 
         case 'DRAW_EVENT':
@@ -210,6 +217,7 @@ export default function Canvas({ boardId }: CanvasProps) {
           break;
 
         case 'CURSOR_MOVE':
+          // Legacy single cursor update (kept for backward compatibility)
           if (message.payload.userId !== currentUserId) {
             updateRemoteCursor(
               message.payload.userId,
@@ -218,6 +226,22 @@ export default function Canvas({ boardId }: CanvasProps) {
               message.payload.displayName,
               message.payload.avatarColor
             );
+          }
+          break;
+
+        case 'CURSOR_BATCH':
+          console.log(`[CURSOR_BATCH] Received ${message.payload.cursors.length} cursors`);
+          // Batched cursor updates - process all cursors except our own
+          for (const cursor of message.payload.cursors) {
+            if (cursor.userId !== currentUserId) {
+              updateRemoteCursor(
+                cursor.userId,
+                cursor.x,
+                cursor.y,
+                cursor.displayName,
+                cursor.avatarColor
+              );
+            }
           }
           break;
 

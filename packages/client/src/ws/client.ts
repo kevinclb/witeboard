@@ -20,6 +20,7 @@ class WebSocketClient {
   private boardId: string | null = null;
   private identity: { clientId: string; displayName: string; isAnonymous: boolean } | null = null;
   private authToken: string | null = null;
+  private lastKnownSeq: number = 0;  // Track last known sequence for delta sync
 
   /**
    * Set the auth token for authenticated requests
@@ -35,6 +36,11 @@ class WebSocketClient {
     boardId: string,
     identity: { clientId: string; displayName: string; isAnonymous: boolean }
   ): void {
+    // Reset lastKnownSeq if switching to a different board
+    if (this.boardId !== boardId) {
+      this.lastKnownSeq = 0;
+    }
+    
     this.boardId = boardId;
     this.identity = identity;
 
@@ -68,6 +74,10 @@ class WebSocketClient {
     this.ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as ServerMessage;
+        
+        // Track sequence numbers for delta sync
+        this.updateLastKnownSeq(message);
+        
         this.handlers.forEach((handler) => handler(message));
       } catch (error) {
         console.error('Failed to parse message:', error);
@@ -97,6 +107,7 @@ class WebSocketClient {
       this.ws = null;
     }
     this.boardId = null;
+    this.lastKnownSeq = 0;  // Reset for next board
   }
 
   /**
@@ -130,8 +141,26 @@ class WebSocketClient {
         clientId: this.identity.clientId,
         displayName: this.identity.displayName,
         isAnonymous: this.identity.isAnonymous,
+        resumeFromSeq: this.lastKnownSeq > 0 ? this.lastKnownSeq : undefined,
       },
     });
+  }
+
+  /**
+   * Update lastKnownSeq from incoming server messages
+   */
+  private updateLastKnownSeq(message: ServerMessage): void {
+    if (message.type === 'SYNC_SNAPSHOT') {
+      // Use lastSeq from snapshot (authoritative)
+      this.lastKnownSeq = message.payload.lastSeq;
+      console.log(`Delta sync: received ${message.payload.isDelta ? 'delta' : 'full'} snapshot, lastSeq=${this.lastKnownSeq}`);
+    } else if (message.type === 'DRAW_EVENT') {
+      // Update from individual draw events
+      const seq = message.payload.seq;
+      if (seq > this.lastKnownSeq) {
+        this.lastKnownSeq = seq;
+      }
+    }
   }
 
   /**
@@ -210,6 +239,16 @@ export type OnCursorMove = (data: {
   avatarColor?: string;
   x: number;
   y: number;
+}) => void;
+export type OnCursorBatch = (data: {
+  boardId: string;
+  cursors: Array<{
+    userId: string;
+    displayName: string;
+    avatarColor?: string;
+    x: number;
+    y: number;
+  }>;
 }) => void;
 export type OnAccessDenied = (data: { boardId: string; reason: string }) => void;
 export type OnBoardCreated = (data: { boardId: string; name?: string; isPrivate: boolean }) => void;

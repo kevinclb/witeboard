@@ -133,6 +133,7 @@ export interface HelloMessage {
     clientId?: string;
     displayName?: string;
     isAnonymous: boolean;
+    resumeFromSeq?: number;  // For delta sync: last known sequence number
   };
 }
 
@@ -184,6 +185,8 @@ export interface SyncSnapshotMessage {
   payload: {
     boardId: string;
     events: DrawEvent[];
+    lastSeq: number;   // Highest seq in this board (for reconnect)
+    isDelta: boolean;  // True if this is a partial sync from resumeFromSeq
   };
 }
 
@@ -266,6 +269,28 @@ export interface AccessDeniedMessage {
   };
 }
 
+/**
+ * Individual cursor data for batched broadcasts
+ */
+export interface CursorData {
+  userId: string;
+  displayName: string;
+  avatarColor?: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * Batched cursor broadcast - reduces N^2 message storm
+ */
+export interface CursorBatchMessage {
+  type: 'CURSOR_BATCH';
+  payload: {
+    boardId: string;
+    cursors: CursorData[];
+  };
+}
+
 export type ServerMessage =
   | SyncSnapshotMessage
   | ServerDrawEventMessage
@@ -277,5 +302,6 @@ export type ServerMessage =
   | ErrorMessage
   | PongMessage
   | BoardCreatedMessage
-  | AccessDeniedMessage;
+  | AccessDeniedMessage
+  | CursorBatchMessage;
 

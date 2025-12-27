@@ -6,6 +6,7 @@ import type {
   CursorMoveMessage,
   CreateBoardMessage,
   ServerMessage,
+  CursorData,
 } from '@witeboard/shared';
 import { generateUUID } from '@witeboard/shared';
 import {
@@ -17,9 +18,11 @@ import {
   getBoardPresence,
   getConnectionBoard,
   getConnectionIdentity,
+  queueCursorUpdate,
+  setCursorBatchBroadcaster,
 } from './presence.js';
 import { sequenceEvent, initBoardSequence } from './sequencer.js';
-import { getEvents, ensureBoardExists, getBoard, createBoard, canAccessBoard } from './db/client.js';
+import { getEvents, getEventsFromSeq, getMaxSeq, ensureBoardExists, getBoard, createBoard, canAccessBoard } from './db/client.js';
 import { verifyClerkToken } from './auth.js';
 
 /**
@@ -60,12 +63,32 @@ function broadcastAll(boardId: string, message: ServerMessage): void {
 }
 
 /**
+ * Broadcast a batched cursor update to all clients in a board
+ */
+function broadcastCursorBatch(boardId: string, cursors: CursorData[]): void {
+  const clients = getBoardClients(boardId);
+  const data = JSON.stringify({
+    type: 'CURSOR_BATCH',
+    payload: { boardId, cursors },
+  });
+  
+  for (const client of clients) {
+    if (client.readyState === client.OPEN) {
+      client.send(data);
+    }
+  }
+}
+
+// Initialize cursor batch broadcaster
+setCursorBatchBroadcaster(broadcastCursorBatch);
+
+/**
  * Handle HELLO message - join board and sync state
  */
 async function handleHello(ws: WebSocket, message: HelloMessage): Promise<void> {
-  const { boardId, authToken, clientId, displayName, isAnonymous } = message.payload;
+  const { boardId, authToken, clientId, displayName, isAnonymous, resumeFromSeq } = message.payload;
 
-  console.log(`HELLO from client: boardId=${boardId}, clientId=${clientId}`);
+  console.log(`HELLO from client: boardId=${boardId}, clientId=${clientId}, resumeFromSeq=${resumeFromSeq ?? 'none'}`);
 
   try {
     // Verify Clerk token if provided
@@ -131,11 +154,18 @@ async function handleHello(ws: WebSocket, message: HelloMessage): Promise<void> 
       },
     });
 
-    // Send SYNC_SNAPSHOT with all events
-    const events = await getEvents(boardId);
+    // Send SYNC_SNAPSHOT - delta sync if resumeFromSeq provided, otherwise full sync
+    const isDelta = resumeFromSeq !== undefined && resumeFromSeq > 0;
+    const events = isDelta
+      ? await getEventsFromSeq(boardId, resumeFromSeq)
+      : await getEvents(boardId);
+    const lastSeq = await getMaxSeq(boardId);
+    
+    console.log(`Sending ${isDelta ? 'delta' : 'full'} sync: ${events.length} events (lastSeq=${lastSeq})`);
+    
     send(ws, {
       type: 'SYNC_SNAPSHOT',
-      payload: { boardId, events },
+      payload: { boardId, events, lastSeq, isDelta },
     });
 
     // Send USER_LIST to the joining client
@@ -200,7 +230,7 @@ async function handleDrawEvent(ws: WebSocket, message: DrawEventMessage): Promis
 }
 
 /**
- * Handle CURSOR_MOVE message - update presence and broadcast
+ * Handle CURSOR_MOVE message - update presence and queue for batched broadcast
  */
 function handleCursorMove(ws: WebSocket, message: CursorMoveMessage): void {
   const result = updateCursor(ws, message.payload.x, message.payload.y);
@@ -209,18 +239,15 @@ function handleCursorMove(ws: WebSocket, message: CursorMoveMessage): void {
     return; // Not joined, ignore
   }
 
-  // Broadcast to others
-  broadcast(result.boardId, {
-    type: 'CURSOR_MOVE',
-    payload: {
-      boardId: result.boardId,
-      userId: result.userId,
-      displayName: result.displayName,
-      avatarColor: result.avatarColor,
-      x: message.payload.x,
-      y: message.payload.y,
-    },
-  }, ws);
+  // Queue for batched broadcast (instead of immediate N^2 broadcast)
+  queueCursorUpdate(
+    result.boardId,
+    result.userId,
+    result.displayName,
+    result.avatarColor,
+    message.payload.x,
+    message.payload.y
+  );
 }
 
 /**
