@@ -47,23 +47,48 @@ React is used ONLY for:
 **React re-renders must not drive drawing.**
 
 ### Canvas Rendering (Three Layers)
-1. **Canvas 1: History** — Rasterized past strokes
-2. **Canvas 2: Live** — Recent/unmerged strokes
-3. **Canvas 3: Cursor overlay** — Presence indicators
+1. **Canvas 1: History** — Rasterized past strokes + snapshot
+2. **Canvas 2: Live** — Current stroke being drawn (optimistic)
+3. **Canvas 3: Cursor overlay** — Remote user presence indicators
 
 Rendering rules:
 - Never re-render full history per frame
-- Append-only draw operations
-- Periodic compaction: merge live → history every N strokes
+- Append-only draw operations to history canvas
 - Cursor overlay: cleared/redrawn each animation frame
+- On pan/zoom: redraw everything with viewport transform
 
-### Client State (Imperative Module)
+### Viewport (Pan/Zoom)
+```typescript
+interface Viewport {
+  offsetX: number  // Pan offset in screen pixels
+  offsetY: number
+  scale: number    // Zoom level (1 = 100%, range 0.1-5)
+}
+```
+- All strokes stored in **world coordinates**
+- Viewport is **local only** (not synced between clients)
+- `screenToWorld()` / `worldToScreen()` convert between coordinate systems
+- `redrawAll()` applies viewport transform when rendering
+
+### Snapshot Compaction (Server-side)
+- Server renders events to a PNG image (using node-canvas)
+- Snapshot stored in `board_snapshots` table with seq number
+- Client loads snapshot image first, then replays events after it
+- Snapshots use **transparent background** (client CSS provides background)
+- On pan/zoom, snapshot is redrawn with viewport transform
+
+### Client State (Imperative Module — `canvas/state.ts`)
 ```typescript
 // These must NOT live in React component state
-drawLog: DrawEvent[]        // Authoritative replay log
-pendingStroke: Stroke | null  // Optimistic local stroke
-cursors: Map<userId, Cursor>  // Ephemeral presence
-users: Map<userId, UserIdentity>  // Presence list for UI
+drawLog: DrawEvent[]              // Authoritative replay log for current board
+pendingStroke: PendingStroke | null  // Optimistic local stroke being drawn
+pendingShape: PendingShape | null    // Optimistic shape being drawn
+cursors: Map<userId, RemoteCursor>   // Ephemeral presence (world coords)
+deletedStrokeIds: Set<string>        // Tracks deleted strokes for replay filtering
+strokeBoundsMap: Map<strokeId, Bounds>  // Hit-testing for eraser
+snapshotImage: HTMLImageElement | null  // Loaded snapshot for redraw
+viewport: Viewport                   // Local pan/zoom state (not synced)
+undoStack: string[]                  // User's own strokeIds for undo
 ```
 
 ### Drawing Flow
@@ -80,14 +105,44 @@ users: Map<userId, UserIdentity>  // Presence list for UI
 interface DrawEvent {
   boardId: string
   seq: number           // Server-assigned, authoritative
-  type: 'stroke' | 'clear'
+  type: 'stroke' | 'shape' | 'text' | 'delete' | 'clear'
   userId: string
   timestamp: number
-  payload: {
-    color?: string
-    width?: number
-    points?: [number, number][]
-  }
+  payload: StrokePayload | ShapePayload | TextPayload | DeletePayload | ClearPayload
+}
+
+// Stroke payload (pencil, marker, brush)
+interface StrokePayload {
+  strokeId: string
+  color: string
+  width: number
+  opacity: number
+  points: [number, number][]  // World coordinates
+}
+
+// Shape payload (rectangle, ellipse, line)
+interface ShapePayload {
+  strokeId: string
+  shapeType: 'rectangle' | 'ellipse' | 'line'
+  start: [number, number]
+  end: [number, number]
+  color: string
+  width: number
+  opacity: number
+}
+
+// Text payload
+interface TextPayload {
+  strokeId: string
+  text: string
+  position: [number, number]
+  color: string
+  fontSize: number
+}
+
+// Delete payload (eraser, undo)
+interface DeletePayload {
+  strokeIds: string[]
 }
 ```
 
@@ -123,9 +178,15 @@ interface PresenceState {
 - `LEAVE_BOARD` — Optional explicit leave
 
 ### Server → Client
-- `SYNC_SNAPSHOT` — Full ordered event list for board
+- `WELCOME` — Confirm identity assignment
+- `SYNC_SNAPSHOT` — Initial sync with optional snapshot + events
+  - `{ snapshot?: { imageData, seq }, events: DrawEvent[], isDelta?: boolean }`
+  - Full sync: all events (no snapshot)
+  - Snapshot sync: snapshot image + events after it
+  - Delta sync: only new events since client's lastSeq
 - `DRAW_EVENT` — Authoritative broadcasted event
-- `CURSOR_MOVE` — Other user cursor updates
+- `CURSOR_MOVE` — Single cursor update (legacy)
+- `CURSOR_BATCH` — Batched cursor updates (preferred)
 - `USER_LIST` — Full presence list
 - `USER_JOIN` — User joined board
 - `USER_LEAVE` — User left board
@@ -150,12 +211,21 @@ CREATE TABLE drawing_events (
   event JSONB NOT NULL,
   PRIMARY KEY (board_id, seq)
 );
+
+-- Snapshot compaction cache (one per board)
+CREATE TABLE board_snapshots (
+  board_id TEXT PRIMARY KEY REFERENCES boards(id),
+  seq BIGINT NOT NULL,          -- Sequence number snapshot covers up to
+  image_data TEXT NOT NULL,     -- Base64-encoded PNG (transparent background)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 ## Routes
-- `/` — Global board (boardId="global")
-- `/login` — Auth flow
-- `/b/:boardId` — Breakout room board (future)
+- `/` — Global public board (boardId="global")
+- `/login` — Clerk auth flow
+- `/boards` — User's board list (requires auth)
+- `/b/:boardId` — Private or shared board
 
 ## UI Components
 
@@ -168,13 +238,20 @@ CREATE TABLE drawing_events (
 - Anonymous vs signed-in indicator
 - Optional cursor color dot
 
-## Explicit Non-Goals (MVP)
-- No CRDTs
-- No SVG rendering
-- No pixel diff syncing
-- No undo (initial version)
-- No access control for rooms (initially)
+## Explicit Non-Goals
+- No CRDTs (server-assigned seq is simpler and sufficient)
+- No SVG rendering (canvas only)
+- No pixel diff syncing (event replay only)
 - No moderation tools (initially)
+
+## Implemented Features
+- Undo (Ctrl/Cmd+Z) - deletes user's own strokes
+- Private boards with Clerk authentication
+- Eraser tool (click to delete strokes)
+- Shape tools (rectangle, ellipse, line)
+- Text tool
+- Infinite canvas with pan/zoom
+- Snapshot compaction (server-side image caching)
 
 ## Implementation Sequence
 1. Frontend React shell (routes, navbar, layout)

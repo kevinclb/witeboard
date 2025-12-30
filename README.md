@@ -80,6 +80,8 @@ witeboard/
 2. **Server-authoritative ordering** — Server assigns sequence numbers for consistency
 3. **Deterministic replay** — Clients replay events to render identical canvases
 4. **Three-layer canvas** — History, live strokes, and cursor overlay for performance
+5. **Snapshot compaction** — Server periodically renders events to PNG for fast initial load
+6. **Infinite canvas** — Pan/zoom with viewport transforms (local, not synced)
 
 ## Deployment
 
@@ -158,38 +160,47 @@ NODE_ENV=production node dist/index.js
 | Undo | Ctrl/Cmd + Z |
 | Create board | Click "New Board" (requires sign-in) |
 
-## Features
+## Tools & Features
 
-- **Global Whiteboard** — Anyone can draw on the shared canvas at `/`
-- **Private Boards** — Signed-in users can create private whiteboards
-- **Tool Palette** — Pencil, marker, brush, shapes, text, eraser
-- **Multi-user Cursors** — See other users' cursors in real-time
-- **Personal Undo** — Undo your own strokes (doesn't affect others)
+- **Drawing Tools** — Pencil, marker, brush with color picker
+- **Shape Tools** — Rectangle, ellipse, line
+- **Text Tool** — Click to place text, Enter to submit
+- **Eraser** — Click on any stroke to delete it
+- **Move Tool** — Pan the canvas (or Space+drag, middle-click)
+- **Undo** — Ctrl/Cmd+Z to undo your own strokes
+- **Infinite Canvas** — Scroll to zoom, pan to explore
+- **Private Boards** — Sign in to create private whiteboards
 
 ## API / WebSocket Protocol
 
 ### Client → Server
 
 - `HELLO` — Join a board with identity
-- `DRAW_EVENT` — Submit a stroke
-- `CURSOR_MOVE` — Update cursor position
+- `DRAW_EVENT` — Submit stroke/shape/text/delete
+- `CURSOR_MOVE` — Update cursor position (world coordinates)
 
 ### Server → Client
 
 - `WELCOME` — Confirm identity
-- `SYNC_SNAPSHOT` — Full event history for replay
-- `DRAW_EVENT` — Broadcast stroke to all clients
-- `CURSOR_MOVE` — Broadcast cursor position
+- `SYNC_SNAPSHOT` — Snapshot image + events (or full event history)
+- `DRAW_EVENT` — Broadcast event to all clients
+- `CURSOR_BATCH` — Batched cursor position updates
 - `USER_LIST` / `USER_JOIN` / `USER_LEAVE` — Presence updates
+- `ACCESS_DENIED` — Private board access denied
 
 ## Roadmap
 
-- [ ] Brush size and color picker UI
-- [ ] Eraser tool
-- [ ] Private breakout rooms (`/b/:boardId`)
-- [ ] User authentication
-- [ ] Undo/redo
+- [x] ~~Brush size and color picker UI~~
+- [x] ~~Eraser tool~~
+- [x] ~~Private breakout rooms (`/b/:boardId`)~~
+- [x] ~~User authentication (Clerk)~~
+- [x] ~~Undo (Ctrl/Cmd+Z)~~
+- [x] ~~Shape tools (rectangle, ellipse, line)~~
+- [x] ~~Text tool~~
+- [x] ~~Snapshot compaction (server-side)~~
+- [ ] Redo
 - [ ] Export to PNG
+- [ ] Collaborative cursors with tool indicators
 
 ## Contributing
 
